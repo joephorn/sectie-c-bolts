@@ -18,22 +18,20 @@
 </head>
 <body>
     <div id="shortcuts" role="navigation" aria-label="Shortcuts">
-      <div class="item"><span class="kbd">1</span> Line</div>
-      <div class="item"><span class="kbd">2</span> Line offset</div>
-      <div class="item"><span class="kbd">3</span> Arc</div>
-      <div class="item"><span class="kbd">4</span> Question</div>
-      <div class="item"><span class="kbd">5</span> Circle (scroll)</div>
-      <div class="item"><span class="kbd">6</span> Vertical</div>
-      <div class="item"><span class="kbd">7</span> Diagonal</div>
-      <div class="item"><span class="kbd">8</span> Arrow ></div>
-      <div class="item"><span class="kbd">9</span> Plus</div>
-      <div class="item" style="margin-left:auto">
-        Jitter
-        <input id="jitter" type="range" min="0" max="100" value="0" step="1">
-        <span id="jitterVal" class="kbd">0%</span>
-    </div>
+        <div class="item"><span class="kbd" data-key="1">1</span> Line (scroll)</div>
+        <div class="item"><span class="kbd" data-key="2">2</span> Line offset</div>
+        <div class="item"><span class="kbd" data-key="3">3</span> Arc</div>
+        <div class="item"><span class="kbd" data-key="4">4</span> Question</div>
+        <div class="item"><span class="kbd" data-key="5">5</span> Circle (scroll)</div>
+        <div class="item"><span class="kbd" data-key="6">6</span> Arrow ></div>
+        <div class="item"><span class="kbd" data-key="7">7</span> Plus</div>
+        <div class="item" style="margin-left:auto">
+            Jitter
+            <input id="jitter" type="range" min="0" max="100" value="0" step="1">
+            <span id="jitterVal" class="kbd">0%</span>
+        </div>
     </div>
     <canvas id="c"></canvas>
-    <script src="./script.js"></script>   
+    <script src="./script.js"></script>
 </body>
 </html>

@@ -27,12 +27,15 @@
     
     let CIRCLE_ROT = 0;
     let currentPoseId = 1;
+    let lineRotDeg = 0; // rotation of the line pose in degrees
     let circleRotDeg = 0;
+    let linePendingSteps = 0;
+    let circlePendingSteps = 0;
     const CIRCLE_FRACTION = 0.75;
 
     const DASH_INDEX = BOLT_FILES.findIndex(p => p.includes('/-.svg')) >= 0
       ? BOLT_FILES.findIndex(p => p.includes('/-.svg'))
-      : 8; // fallback based on known order
+      : 6; // fallback based on known order
 
     let jitterAmt = 0;        // 0..1 from the slider
     let jitterAngles = new Array(N).fill(0).map(() => (Math.random()*2 - 1)); // per-bolt direction [-1,1]
@@ -47,13 +50,6 @@
         jitterEl.addEventListener('input', upd);
         upd();
     }
-
-    window.addEventListener('wheel', (e) => {
-        if (currentPoseId === 5) { 
-            CIRCLE_ROT += e.deltaY * -0.1;
-            setTargets(poseCircle());
-        }
-    });
 
     function importSymbol(url){
         return new Promise((resolve, reject) => {
@@ -172,6 +168,31 @@
     let pendingPoseId = null; // last requested pose while animating
     let poseTween = null;     // gsap tween handle for interp
 
+    function consumeLineQueueIfNeeded(){
+        if (currentPoseId !== 1) return false; // only for the line pose
+        const pending = linePendingSteps;
+        if (!pending) return false;
+        const dir = Math.sign(pending);       // take one step toward zero
+        linePendingSteps -= dir;
+        const step = 45;
+        lineRotDeg = (lineRotDeg - dir * step) % 360; // negative keeps scroll “natural”
+        if (lineRotDeg < 0) lineRotDeg += 360;
+        setTargets(poseLine(), 0.1);          // kick off a single tween step
+        return true;
+    }
+    function consumeCircleQueueIfNeeded(){
+        if (currentPoseId !== 5) return false; // alleen in circle-pose
+        const pending = circlePendingSteps;
+        if (!pending) return false;
+        const dir = Math.sign(pending);     // neem 1 stap richting 0
+        circlePendingSteps -= dir;
+        const step = 22.5;                    // graden per queued stap (vergroot van 5° naar 45°)
+        circleRotDeg = (circleRotDeg - dir * step) % 360; // negatief voelt “natuurlijk”
+        if (circleRotDeg < 0) circleRotDeg += 360;
+        setTargets(poseCircle(), 0.1);     // kleine tween per stap
+        return true;
+    }
+
     function setTargets(targets, dur = 0.8){
         if (!bolts.length) return;
         fromPose = bolts.map((it, i) => ({ pos: it.position.clone(), rot: lastBaseRot[i] || 0 }));
@@ -180,25 +201,26 @@
         if (poseTween) poseTween.kill();
         isAnimating = true;
         poseTween = gsap.to(interp, { 
-          duration: dur, 
-          t: 1, 
-          ease: 'power2.inOut',
-          onComplete: () => {
-            isAnimating = false;
-            poseTween = null;
-            if (pendingPoseId !== null) {
-              const id = pendingPoseId;
-              pendingPoseId = null;
-              switchPose(id); // will run immediately if not animating
+            duration: dur, 
+            t: 1, 
+            ease: 'power2.inOut',
+            onComplete: () => {
+                isAnimating = false;
+                poseTween = null;
+                if (consumeLineQueueIfNeeded() || consumeCircleQueueIfNeeded()) return;
+                if (pendingPoseId !== null) {
+                const id = pendingPoseId;
+                pendingPoseId = null;
+                switchPose(id);
+                }
             }
-          }
         });
     }
 
     function applyVisibilityForPose(poseId){
       if (!bolts.length) return;
       for (let i = 0; i < bolts.length; i++) bolts[i].visible = true;
-      if (poseId === 8 && bolts[DASH_INDEX]) {
+      if (poseId === 6 && bolts[DASH_INDEX]) {
         bolts[DASH_INDEX].visible = false;
       }
     }
@@ -220,7 +242,13 @@
     // ----------------- Define Poses -----------------
     function poseLine(){
         const totalLength = SPACING * (N - 1);
-        const p = makeLinePath(-totalLength/2, 0, totalLength/2, 0);
+        const half = totalLength / 2;
+        const a = lineRotDeg * Math.PI / 180;
+        const cos = Math.cos(a), sin = Math.sin(a);
+        // endpoints of a centered line rotated by lineRotDeg
+        const x1 = -half * cos, y1 = -half * sin;
+        const x2 =  half * cos, y2 =  half * sin;
+        const p = makeLinePath(x1, y1, x2, y2);
         const targets = distributeOnSinglePathWithSpacing(p, N, SPACING, 'upright');
         p.remove();
         return targets;
@@ -282,8 +310,8 @@
         const r = Math.min(W,H) * 0.25 * SCALE;
         const CIRCLE_FRACTION = 0.75; // bv. 270°
         const sweep = 360 * CIRCLE_FRACTION;
-        const startAngle = CIRCLE_ROT - sweep/2;
-        const endAngle   = CIRCLE_ROT + sweep/2;
+        const startAngle = circleRotDeg - sweep/2;
+        const endAngle   = circleRotDeg + sweep/2;
         const p = makeArcPath(0, 0, r, startAngle, endAngle);
         const targets = distributeOnPaths([p], N, 'upright');
         p.remove();
@@ -364,10 +392,8 @@
         if (id===3) targets = poseArcUp();
         if (id===4) targets = poseArcDown();
         if (id===5) targets = poseCircle();
-        if (id===6) targets = poseVertical();
-        if (id===7) targets = poseDiagonal();
-        if (id===8) targets = poseArrowRight();
-        if (id===9) targets = poseCross();
+        if (id===6) targets = poseArrowRight();
+        if (id===7) targets = poseCross();
         if (targets) setTargets(targets);
         applyVisibilityForPose(id);
     }
@@ -380,14 +406,42 @@
     // Scroll to rotate the circle arc when pose 5 is active
     canvas.addEventListener('wheel', (e) => {
         if (!ready) return;
-        if (currentPoseId !== 5) return;
-        e.preventDefault();
-        const delta = e.deltaY || 0;            // positive when scrolling down on most devices
-        const sensitivity = 0.15;               // degrees per wheel unit
-        circleRotDeg = (circleRotDeg - delta * sensitivity) % 360; // invert for natural feel
-        if (circleRotDeg < 0) circleRotDeg += 360;
-        setTargets(poseCircle(), 0.15);
+        const delta = e.deltaY || 0;
+        if (currentPoseId === 5) { // circle pose: rotate in queued steps
+            e.preventDefault();
+            const dir = Math.sign(delta);
+            if (dir !== 0) {
+                circlePendingSteps += dir;                    // enqueue stap
+                if (!isAnimating) consumeCircleQueueIfNeeded(); // start als idle
+            }
+            return;
+        }
+        if (currentPoseId === 1) {
+            e.preventDefault();
+            const dir = Math.sign(delta);
+            if (dir !== 0) {
+                linePendingSteps += dir;                 // enqueue a step
+                if (!isAnimating) consumeLineQueueIfNeeded(); // start processing if idle
+            }
+            return;
+        }
     }, { passive: false });
+
+    // --- Clickable shortcuts in the top bar ---
+    (function bindShortcutClicks(){
+        const nodes = document.querySelectorAll('#shortcuts .kbd');
+        if (!nodes || !nodes.length) return;
+        nodes.forEach(el => {
+            el.style.cursor = 'pointer';
+            el.addEventListener('click', () => {
+                const attr = el.getAttribute('data-key');
+                const key = attr ? parseInt(attr, 10) : parseInt((el.textContent||'').trim(), 10);
+                if (!isNaN(key)) {
+                    switchPose(key); // uses internal queuing/locks
+                }
+            });
+        });
+    })();
 
     // ----------------- Animate loop -----------------
     view.onFrame = function(){
