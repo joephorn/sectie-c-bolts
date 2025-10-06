@@ -2,14 +2,38 @@
 <html>
 <head>
     <meta charset="utf-8" />
-    <title>Bolts Layout Engine (Paper + GSAP)</title>
-    <style>html,body{margin:0;height:100%;background: #fff;}canvas{width:100%;height:100%}</style>
+    <title>Sectie-C Bolts</title>
+    <style>
+      :root{ --bar-h: 64px; }
+      html,body{margin:0;height:100%;background:#fff;}
+      body{display:flex;flex-direction:column;height:100vh;}
+      #shortcuts{height:var(--bar-h);box-sizing:border-box;padding:10px 14px;display:flex;gap:16px;align-items:center;border-bottom:1px solid #e6e6e6;font:14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;}
+      #shortcuts .kbd{font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background:#f3f3f3; border:1px solid #ddd; border-bottom-color:#ccc; padding:2px 6px; border-radius:6px; box-shadow:inset 0 -1px 0 rgba(0,0,0,.06);} 
+      #shortcuts .item{display:flex;align-items:center;gap:8px;white-space:nowrap;}
+      #c{flex:1 1 auto; width:100%; height:calc(100vh - var(--bar-h)); display:block;}
+    </style>
     <script src="https://unpkg.com/gsap@3.12.5/dist/gsap.min.js"></script>
     <script type="text/javascript" src="https://unpkg.com/acorn"></script>
     <script type="text/javascript" src="https://unpkg.com/paper"></script>
 </head>
 <body>
+    <div id="shortcuts" role="navigation" aria-label="Shortcuts">
+      <div class="item"><span class="kbd">1</span> Line</div>
+      <div class="item"><span class="kbd">2</span> Line offset</div>
+      <div class="item"><span class="kbd">3</span> Arc</div>
+      <div class="item"><span class="kbd">4</span> Question</div>
+      <div class="item"><span class="kbd">5</span> Circle (scroll)</div>
+      <div class="item"><span class="kbd">6</span> Vertical</div>
+      <div class="item"><span class="kbd">7</span> Diagonal</div>
+      <div class="item"><span class="kbd">8</span> Arrow ></div>
+      <div class="item"><span class="kbd">9</span> Plus</div>
+      <div class="item" style="margin-left:auto">
+        Jitter
+        <input id="jitter" type="range" min="0" max="100" value="0" step="1">
+        <span id="jitterVal" class="kbd">0%</span>
+    </div>
+    </div>
     <canvas id="c"></canvas>
-    <script type="text/paperscript" canvas="c" src="./script.js"></script>   
+    <script src="./script.js"></script>   
 </body>
 </html>

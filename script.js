@@ -15,7 +15,7 @@
     let ready = false;
 
     // ----------------- Params -----------------
-    const N = BOLT_FILES.length;                  // aantal bolts
+    const N = BOLT_FILES.length;
     const W = view.bounds.width;
     const H = view.bounds.height;
     const centerX = W/2;
@@ -23,6 +23,37 @@
     const SCALE = 0.5;
     const BASE_SPACING = 110;
     const SPACING = BASE_SPACING * SCALE;
+    const JITTER_MAX_DEG = 25;
+    
+    let CIRCLE_ROT = 0;
+    let currentPoseId = 1;
+    let circleRotDeg = 0;
+    const CIRCLE_FRACTION = 0.75;
+
+    const DASH_INDEX = BOLT_FILES.findIndex(p => p.includes('/-.svg')) >= 0
+      ? BOLT_FILES.findIndex(p => p.includes('/-.svg'))
+      : 8; // fallback based on known order
+
+    let jitterAmt = 0;        // 0..1 from the slider
+    let jitterAngles = new Array(N).fill(0).map(() => (Math.random()*2 - 1)); // per-bolt direction [-1,1]
+
+    const jitterEl = document.getElementById('jitter');
+    const jitterValEl = document.getElementById('jitterVal');
+    if (jitterEl){
+        const upd = () => {
+            jitterAmt = Number(jitterEl.value) / 100; // 0..1
+            if (jitterValEl) jitterValEl.textContent = Math.round(jitterAmt*100) + '%';
+        };
+        jitterEl.addEventListener('input', upd);
+        upd();
+    }
+
+    window.addEventListener('wheel', (e) => {
+        if (currentPoseId === 5) { 
+            CIRCLE_ROT += e.deltaY * -0.1;
+            setTargets(poseCircle());
+        }
+    });
 
     function importSymbol(url){
         return new Promise((resolve, reject) => {
@@ -52,6 +83,7 @@
             return it;
         });
         // startpose zodra alle SVG's klaar zijn
+        // jitterAngles = new Array(N).fill(0).map(() => (Math.random()*2 - 1)); // removed re-seed for stability
         setTargets(poseLine());
         ready = true;
         })
@@ -80,6 +112,11 @@
         points.forEach(pt => p.add(new Point(pt[0], pt[1])));
         p.smooth({type:'continuous'});
         return p;
+    }
+    function makePolylineSharp(points){
+        const p = new Path({ strokeColor: null });
+        points.forEach(pt => p.add(new Point(pt[0], pt[1])));
+        return p; // no smoothing -> crisp chevron
     }
 
     // Verdeel N items over 1..k paden, proportioneel op lengte
@@ -129,24 +166,54 @@
     const interp = { t: 1 };     // 0..1
     let fromPose = [];
     let toPose   = [];
+    let lastBaseRot = new Array(N).fill(0); // store rotation before jitter is applied
 
-    function setTargets(targets){
+    let isAnimating = false;
+    let pendingPoseId = null; // last requested pose while animating
+    let poseTween = null;     // gsap tween handle for interp
+
+    function setTargets(targets, dur = 0.8){
         if (!bolts.length) return;
-        fromPose = bolts.map(it => ({ pos: it.position.clone(), rot: it.rotation }));
+        fromPose = bolts.map((it, i) => ({ pos: it.position.clone(), rot: lastBaseRot[i] || 0 }));
         toPose   = targets;
         interp.t = 0;
-        gsap.to(interp, { duration: 0.8, t: 1, ease: 'power2.inOut' });
+        if (poseTween) poseTween.kill();
+        isAnimating = true;
+        poseTween = gsap.to(interp, { 
+          duration: dur, 
+          t: 1, 
+          ease: 'power2.inOut',
+          onComplete: () => {
+            isAnimating = false;
+            poseTween = null;
+            if (pendingPoseId !== null) {
+              const id = pendingPoseId;
+              pendingPoseId = null;
+              switchPose(id); // will run immediately if not animating
+            }
+          }
+        });
+    }
+
+    function applyVisibilityForPose(poseId){
+      if (!bolts.length) return;
+      for (let i = 0; i < bolts.length; i++) bolts[i].visible = true;
+      if (poseId === 8 && bolts[DASH_INDEX]) {
+        bolts[DASH_INDEX].visible = false;
+      }
     }
 
     function applyPose(){
         const t = interp.t;
-        for (let i=0;i<bolts.length;i++){
-        const a = fromPose[i] || { pos: new Point(W*0.5,H*0.5), rot: 0 };
-        const b = toPose[i]   || a;
-        const p = a.pos.add( b.pos.subtract(a.pos).multiply(t) );
-        const r = a.rot + (b.rot - a.rot) * t;
-        bolts[i].position = p;
-        bolts[i].rotation = r;
+        for (let i = 0; i < bolts.length; i++){
+          const a = fromPose[i] || { pos: new Point(W*0.5,H*0.5), rot: 0 };
+          const b = toPose[i]   || a;
+          const p = a.pos.add( b.pos.subtract(a.pos).multiply(t) );
+          const rBase = a.rot + (b.rot - a.rot) * t; // base rotation without jitter
+          lastBaseRot[i] = rBase;                    // persist base rotation for next pose switch
+          const jitterDeg = jitterAmt * JITTER_MAX_DEG * (jitterAngles[i] || 0);
+          bolts[i].position = p;
+          bolts[i].rotation = rBase + jitterDeg;     // apply jitter once, consistently
         }
     }
 
@@ -158,10 +225,23 @@
         p.remove();
         return targets;
     }
+    function poseOffsetLine(){
+        const totalLength = SPACING * (N - 1);
+        const xStart = -totalLength / 2 * 0.9;
+        const OFF = SPACING * 0.2; // vertical offset amplitude
+        const targets = [];
+        for (let i = 0; i < N; i++) {
+            const x = xStart + i * SPACING*0.9;
+            const y = (i % 2 === 0 ? -OFF : OFF); // alternate above/below
+            const pos = new Point(centerX + x, centerY + y);
+            targets.push({ pos, rot: 0 }); // keep upright; jitter handles slight variation
+        }
+        return targets;
+    }
     function poseArcUp(){
         const baseR = Math.min(W, H) * 0.28 * SCALE;
-        const rx = baseR * 1.4; // horizontaal breder
-        const ry = baseR * 0.8; // verticaal platter
+        const rx = baseR * 1.4;
+        const ry = baseR * 0.9;
         const startAngle = 200;
         const endAngle = -20;
 
@@ -180,8 +260,8 @@
     }
     function poseArcDown(){
         const baseR = Math.min(W, H) * 0.28 * SCALE;
-        const rx = baseR * 1.4; // horizontaal breder
-        const ry = baseR * -0.8; // verticaal platter
+        const rx = baseR * 1.4;
+        const ry = baseR * -0.9;
         const startAngle = 200;
         const endAngle = -20;
 
@@ -199,9 +279,11 @@
         return targets;
     }
     function poseCircle(){
-        const r = Math.min(W,H) * 0.22 * SCALE;
-        const startAngle = 240;      // bv. rechtsboven
-        const endAngle   = -60;      // 270° boog
+        const r = Math.min(W,H) * 0.25 * SCALE;
+        const CIRCLE_FRACTION = 0.75; // bv. 270°
+        const sweep = 360 * CIRCLE_FRACTION;
+        const startAngle = CIRCLE_ROT - sweep/2;
+        const endAngle   = CIRCLE_ROT + sweep/2;
         const p = makeArcPath(0, 0, r, startAngle, endAngle);
         const targets = distributeOnPaths([p], N, 'upright');
         p.remove();
@@ -216,54 +298,100 @@
     }
     function poseDiagonal(){
         const totalLength = SPACING * (N - 1);
-        const p = makeLinePath(-totalLength/2, -totalLength/2, totalLength/2, totalLength/2);
+        const d = totalLength / (2 * Math.SQRT2);
+        const p = makeLinePath(-d, -d, d, d);
         const targets = distributeOnSinglePathWithSpacing(p, N, SPACING, 'upright');
         p.remove();
         return targets;
     }
     function poseArrowRight(){
-        const d = Math.min(W, H) * 0.3 * SCALE;
+        // Symmetric chevron '>' centered at origin, no smoothing so it stays straight
+        const halfH = Math.min(W, H) * 0.35 * SCALE;   // vertical half-height
+        const halfW = halfH * 0.6;                     // narrower horizontal half-width
         const pts = [
-            [-d/1.5, -d],   // upper-left
-            [ d,  0],   // right vertex (opens to the right)
-            [-d/1.5,  d]    // lower-left
+            [-halfW, -halfH],  // upper-left
+            [ halfW,   0],     // right tip
+            [-halfW,  halfH]   // lower-left
         ];
-        const p = makePolyline(pts);
-        const targets = distributeOnPaths([p], N, 'upright'); // or 'tangent' if you want rotation
+        const p = makePolylineSharp(pts);
+
+        // Distribute N-1 items (exclude dash) so spacing stays tight
+        const count = Math.max(0, N - 1);
+        const targetsShort = distributeOnPaths([p], count, 'upright');
         p.remove();
+
+        // Map back to full list while skipping dash index
+        const targets = new Array(N);
+        let k = 0;
+        for (let i = 0; i < N; i++) {
+            if (i === DASH_INDEX) continue;
+            targets[i] = targetsShort[k++];
+        }
+        if (DASH_INDEX >= 0 && DASH_INDEX < N) {
+            targets[DASH_INDEX] = { pos: new Point(centerX, centerY), rot: 0 };
+        }
         return targets;
     }
-    // function poseCross(){
-    //     const arm = Math.min(W,H) * 0.12 * SCALE;
-    //     const horiz = makeLinePath(-arm, 0, arm, 0);
-    //     const vert  = makeLinePath(0, -arm*1.5, 0, arm*1.5);
-    //     const targets = distributeOnPaths([vert, horiz], N, 'upright');
-    //     horiz.remove(); vert.remove();
-    //     return targets;
-    // }
+    function poseCross(){
+        const offsets = [
+          new Point(0, -2*SPACING + SPACING/4),  // S (top far)
+          new Point(0, -1*SPACING + SPACING/4),  // E (top near)
+          new Point(-2*SPACING + SPACING/4, 0),  // C (left far)
+          new Point(-1*SPACING + SPACING/4, 0),  // T (left near)
+          new Point( 1*SPACING - SPACING/4, 0),  // I (right near)
+          new Point( 2*SPACING - SPACING/4, 0),  // E (right far)
+          new Point(0,  1*SPACING - SPACING/4),  // - (just above bottom)
+          new Point(0,  2*SPACING - SPACING/4)   // C-inverted (bottom)
+        ];
+        const cx = centerX, cy = centerY;
+        const targets = offsets.slice(0, N).map(off => ({
+            pos: off.add(new Point(cx, cy)),
+            rot: 0
+        }));
+        return targets;
+    }
 
-    // ----------------- Keyboard: 1..7 wisselt pose -----------------
+    // ----------------- Keyboard -----------------
     function switchPose(id){
+        if (isAnimating) {
+          pendingPoseId = id;
+          return;
+        }
+        currentPoseId = id;
         let targets;
         if (id===1) targets = poseLine();
-        if (id===2) targets = poseArcUp();
-        if (id===3) targets = poseArcDown();
-        if (id===4) targets = poseCircle();
-        if (id===5) targets = poseVertical();
-        if (id===6) targets = poseDiagonal();
-        if (id===7) targets = poseArrowRight();
-        if (id===8) targets = poseCross();
+        if (id===2) targets = poseOffsetLine();
+        if (id===3) targets = poseArcUp();
+        if (id===4) targets = poseArcDown();
+        if (id===5) targets = poseCircle();
+        if (id===6) targets = poseVertical();
+        if (id===7) targets = poseDiagonal();
+        if (id===8) targets = poseArrowRight();
+        if (id===9) targets = poseCross();
         if (targets) setTargets(targets);
+        applyVisibilityForPose(id);
     }
 
     tool.onKeyDown = function(e){
         const n = parseInt(e.key, 10);
-        if (n>=1 && n<=7) switchPose(n);
+        if (n>=1 && n<=9) switchPose(n);
     };
+
+    // Scroll to rotate the circle arc when pose 5 is active
+    canvas.addEventListener('wheel', (e) => {
+        if (!ready) return;
+        if (currentPoseId !== 5) return;
+        e.preventDefault();
+        const delta = e.deltaY || 0;            // positive when scrolling down on most devices
+        const sensitivity = 0.15;               // degrees per wheel unit
+        circleRotDeg = (circleRotDeg - delta * sensitivity) % 360; // invert for natural feel
+        if (circleRotDeg < 0) circleRotDeg += 360;
+        setTargets(poseCircle(), 0.15);
+    }, { passive: false });
 
     // ----------------- Animate loop -----------------
     view.onFrame = function(){
-        if (!ready) return; // wacht tot SVG geladen is
+        if (!ready) return;
         applyPose();
     };
 })();
