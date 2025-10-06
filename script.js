@@ -20,7 +20,7 @@
     const H = view.bounds.height;
     const centerX = W/2;
     const centerY = H/2;
-    const SCALE = 0.5;
+    const SCALE = 0.75;
     const BASE_SPACING = 110;
     const SPACING = BASE_SPACING * SCALE;
     const JITTER_MAX_DEG = 25;
@@ -255,11 +255,11 @@
     }
     function poseOffsetLine(){
         const totalLength = SPACING * (N - 1);
-        const xStart = -totalLength / 2 * 0.9;
-        const OFF = SPACING * 0.2; // vertical offset amplitude
+        const xStart = -totalLength / 2 * 0.85;
+        const OFF = SPACING * 0.25; // vertical offset amplitude
         const targets = [];
         for (let i = 0; i < N; i++) {
-            const x = xStart + i * SPACING*0.9;
+            const x = xStart + i * SPACING*0.85;
             const y = (i % 2 === 0 ? -OFF : OFF); // alternate above/below
             const pos = new Point(centerX + x, centerY + y);
             targets.push({ pos, rot: 0 }); // keep upright; jitter handles slight variation
@@ -334,7 +334,7 @@
     }
     function poseArrowRight(){
         // Symmetric chevron '>' centered at origin, no smoothing so it stays straight
-        const halfH = Math.min(W, H) * 0.35 * SCALE;   // vertical half-height
+        const halfH = Math.min(W, H) * 0.33 * SCALE;   // vertical half-height
         const halfW = halfH * 0.6;                     // narrower horizontal half-width
         const pts = [
             [-halfW, -halfH],  // upper-left
@@ -360,6 +360,7 @@
         }
         return targets;
     }
+    
     function poseCross(){
         const offsets = [
           new Point(0, -2*SPACING + SPACING/4),  // S (top far)
@@ -371,6 +372,29 @@
           new Point(0,  1*SPACING - SPACING/4),  // - (just above bottom)
           new Point(0,  2*SPACING - SPACING/4)   // C-inverted (bottom)
         ];
+        const cx = centerX, cy = centerY;
+        const targets = offsets.slice(0, N).map(off => ({
+            pos: off.add(new Point(cx, cy)),
+            rot: 0
+        }));
+        return targets;
+    }
+    
+    function poseX(){
+        const s = SPACING;
+        const r2 = Math.SQRT2;
+
+        const offsets = [
+            new Point(-2*s/r2, -2*s/r2),   // top far
+            new Point(-s/r2,  -s/r2),     // top near
+            new Point(-2*s/r2,  2*s/r2),   // left far (rotated)
+            new Point(-s/r2,   s/r2),     // left near (rotated)
+            new Point(s/r2,   -s/r2),     // right near (rotated)
+            new Point(2*s/r2, -2*s/r2),   // right far (rotated)
+            new Point(s/r2,    s/r2),     // bottom near (rotated)
+            new Point(2*s/r2,  2*s/r2)    // bottom far (rotated)
+        ];
+
         const cx = centerX, cy = centerY;
         const targets = offsets.slice(0, N).map(off => ({
             pos: off.add(new Point(cx, cy)),
@@ -394,6 +418,7 @@
         if (id===5) targets = poseCircle();
         if (id===6) targets = poseArrowRight();
         if (id===7) targets = poseCross();
+        if (id===8) targets = poseX();
         if (targets) setTargets(targets);
         applyVisibilityForPose(id);
     }
