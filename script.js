@@ -33,6 +33,9 @@
     let circlePendingSteps = 0;
     const CIRCLE_FRACTION = 0.75;
 
+    let arrowRotDeg = 0;
+    let arrowPendingSteps = 0;
+
     const DASH_INDEX = BOLT_FILES.findIndex(p => p.includes('/-.svg')) >= 0
       ? BOLT_FILES.findIndex(p => p.includes('/-.svg'))
       : 6; // fallback based on known order
@@ -192,6 +195,18 @@
         setTargets(poseCircle(), 0.1);     // kleine tween per stap
         return true;
     }
+    function consumeArrowQueueIfNeeded(){
+        if (currentPoseId !== 6) return false;     // only for arrow pose
+        const pending = arrowPendingSteps;
+        if (!pending) return false;
+        const dir = Math.sign(pending);
+        arrowPendingSteps -= dir;
+        const step = 90;                            // degrees per step
+        arrowRotDeg = (arrowRotDeg - dir * step) % 360; // negative keeps scroll natural
+        if (arrowRotDeg < 0) arrowRotDeg += 360;
+        setTargets(poseArrowRight(), 0.15);
+        return true;
+    }
 
     function setTargets(targets, dur = 0.8){
         if (!bolts.length) return;
@@ -207,7 +222,7 @@
             onComplete: () => {
                 isAnimating = false;
                 poseTween = null;
-                if (consumeLineQueueIfNeeded() || consumeCircleQueueIfNeeded()) return;
+                if (consumeLineQueueIfNeeded() || consumeCircleQueueIfNeeded() || consumeArrowQueueIfNeeded()) return;
                 if (pendingPoseId !== null) {
                 const id = pendingPoseId;
                 pendingPoseId = null;
@@ -317,30 +332,21 @@
         p.remove();
         return targets;
     }
-    function poseVertical(){
-        const totalLength = SPACING * (N - 1);
-        const p = makeLinePath(0, -totalLength/2, 0, totalLength/2);
-        const targets = distributeOnSinglePathWithSpacing(p, N, SPACING, 'upright');
-        p.remove();
-        return targets;
-    }
-    function poseDiagonal(){
-        const totalLength = SPACING * (N - 1);
-        const d = totalLength / (2 * Math.SQRT2);
-        const p = makeLinePath(-d, -d, d, d);
-        const targets = distributeOnSinglePathWithSpacing(p, N, SPACING, 'upright');
-        p.remove();
-        return targets;
-    }
     function poseArrowRight(){
-        // Symmetric chevron '>' centered at origin, no smoothing so it stays straight
-        const halfH = Math.min(W, H) * 0.33 * SCALE;   // vertical half-height
-        const halfW = halfH * 0.6;                     // narrower horizontal half-width
-        const pts = [
+        const halfH = Math.min(W, H) * 0.33 * SCALE; // vertical half-height
+        const halfW = halfH * 0.6;                    // narrower horizontal half-width
+
+        const basePts = [
             [-halfW, -halfH],  // upper-left
-            [ halfW,   0],     // right tip
+            [ halfW,   0     ],// right tip
             [-halfW,  halfH]   // lower-left
         ];
+
+        // rotate by arrowRotDeg around origin (rotate the path, not the SVGs)
+        const a = arrowRotDeg * Math.PI / 180;
+        const c = Math.cos(a), s = Math.sin(a);
+        const pts = basePts.map(([x,y]) => [x*c - y*s, x*s + y*c]);
+
         const p = makePolylineSharp(pts);
 
         // Distribute N-1 items (exclude dash) so spacing stays tight
@@ -352,7 +358,7 @@
         const targets = new Array(N);
         let k = 0;
         for (let i = 0; i < N; i++) {
-            if (i === DASH_INDEX) continue;
+            if (i === DASH_INDEX) continue; // skip dash
             targets[i] = targetsShort[k++];
         }
         if (DASH_INDEX >= 0 && DASH_INDEX < N) {
@@ -432,6 +438,15 @@
     canvas.addEventListener('wheel', (e) => {
         if (!ready) return;
         const delta = e.deltaY || 0;
+        if (currentPoseId === 1) {
+            e.preventDefault();
+            const dir = Math.sign(delta);
+            if (dir !== 0) {
+                linePendingSteps += dir;                 // enqueue a step
+                if (!isAnimating) consumeLineQueueIfNeeded(); // start processing if idle
+            }
+            return;
+        }
         if (currentPoseId === 5) { // circle pose: rotate in queued steps
             e.preventDefault();
             const dir = Math.sign(delta);
@@ -441,12 +456,12 @@
             }
             return;
         }
-        if (currentPoseId === 1) {
+        if (currentPoseId === 6) { // arrow pose: rotate in queued 90° steps
             e.preventDefault();
             const dir = Math.sign(delta);
             if (dir !== 0) {
-                linePendingSteps += dir;                 // enqueue a step
-                if (!isAnimating) consumeLineQueueIfNeeded(); // start processing if idle
+                arrowPendingSteps += dir;                     // enqueue step
+                if (!isAnimating) consumeArrowQueueIfNeeded(); // start processing if idle
             }
             return;
         }
