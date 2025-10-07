@@ -23,7 +23,7 @@ const centerY = H/2;
 const SCALE = 0.75;
 const BASE_SPACING = 110;
 const SPACING = BASE_SPACING * SCALE;
-const JITTER_MAX_DEG = 25;
+const JITTER_MAX_DEG = 50;
 
 // Mid-animation rotation (driven by jitter slider): ramp in, then click off
 const MIDJIT_ENABLE   = true;   // master toggle
