@@ -27,7 +27,7 @@ const JITTER_MAX_DEG = 25;
 
 let CIRCLE_ROT = 0;
 let currentPoseId = 1;
-let lineRotDeg = 0; // rotation of the line pose in degrees
+let lineRotDeg = 0;
 let circleRotDeg = 0;
 let linePendingSteps = 0;
 let circlePendingSteps = 0;
@@ -40,7 +40,12 @@ const ROT_DUR_CIRCLE = 0.20;
 const ROT_DUR_ARROW  = 0.20;
 
 // Pose transition duration (used when switching poses)
-let POSE_DUR = 0.6; // seconds
+
+let POSE_DUR = 0.5; // seconds
+
+// --- Global easing for pose transitions ---
+const EASE_MODES = ['trapezoid','power2','power3','expo','sine','back'];
+let EASE_MODE = 'power3'; // change to one of EASE_MODES
 
 // --- Servo feel parameters ---
 const ENABLE_BACKLASH = true; // set true for tiny settle effect near the end
@@ -49,13 +54,13 @@ const BACKLASH_GAIN = 0.3;     // strength of settle if enabled
 // --- Clockwork stepping (discrete tween states) ---
 // Position stepping
 const ENABLE_STEPPED_TIME = true;  // quantize POSITION tween time into ticks
-const STEP_COUNT          = 16;     // ticks per move for position
-const STEP_JITTER         = 0.4;  // 0..0.5 of a step as per-bolt phase jitter
+const STEP_COUNT          = 20;     // ticks per move for position
+const STEP_JITTER         = 0.9;  // 0..0.5 of a step as per-bolt phase jitter
 
 // Rotation stepping (independent from position)
 const ENABLE_STEPPED_ROT  = true;  // quantize ROTATION tween time into ticks
-const ROT_STEP_COUNT      = 3;     // ticks per move for rotation
-const ROT_STEP_JITTER     = 0.1;  // 0..0.5 per-bolt phase jitter for rotation
+const ROT_STEP_COUNT      = 6;     // ticks per move for rotation
+const ROT_STEP_JITTER     = 0.05;  // 0..0.5 per-bolt phase jitter for rotation
 
 const DASH_INDEX = BOLT_FILES.findIndex(p => p.includes('/-.svg')) >= 0
     ? BOLT_FILES.findIndex(p => p.includes('/-.svg'))
@@ -217,6 +222,31 @@ function consumeArrowQueueIfNeeded(){
     return true;
 }
 
+function _startPoseTween(dur, onComplete){
+  if (poseTween) poseTween.kill();
+  if (EASE_MODE === 'trapezoid'){
+    const accel  = dur * 0.35;  // accelerate fast
+    const cruise = dur * 0.30;  // constant speed
+    const decel  = dur * 0.35;  // smooth brake
+    const tl = gsap.timeline({ onComplete });
+    poseTween = tl
+      .to(interp, { t: 0.6, duration: accel,  ease: 'power2.in'  })
+      .to(interp, { t: 0.9, duration: cruise, ease: 'none'        })
+      .to(interp, { t: 1.0, duration: decel,  ease: 'power2.out'  });
+  } else {
+    // map to GSAP ease strings
+    const map = {
+      power2: 'power2.inOut',
+      power3: 'power3.inOut',
+      expo:   'expo.inOut',
+      sine:   'sine.inOut',
+      back:   'back.inOut(1.1)'
+    };
+    const easeStr = map[EASE_MODE] || 'power2.inOut';
+    poseTween = gsap.to(interp, { duration: dur, t: 1, ease: easeStr, onComplete });
+  }
+}
+
 function setTargets(targets, dur = 0.8){
     if (!bolts.length) return;
     fromPose = bolts.map((it, i) => ({ pos: it.position.clone(), rot: lastBaseRot[i] || 0 }));
@@ -224,27 +254,16 @@ function setTargets(targets, dur = 0.8){
     interp.t = 0;
     if (poseTween) poseTween.kill();
     isAnimating = true;
-
-    const accel  = dur * 0.35; // accelerate fast
-    const cruise = dur * 0.30; // flat speed
-    const decel  = dur * 0.35; // smooth brake
-
-    const tl = gsap.timeline({
-    onComplete: () => {
-        isAnimating = false;
-        poseTween = null;
-        if (consumeLineQueueIfNeeded() || consumeCircleQueueIfNeeded() || consumeArrowQueueIfNeeded()) return;
-        if (pendingPoseId !== null) {
+    _startPoseTween(dur, () => {
+      isAnimating = false;
+      poseTween = null;
+      if (consumeLineQueueIfNeeded() || consumeCircleQueueIfNeeded() || consumeArrowQueueIfNeeded()) return;
+      if (pendingPoseId !== null) {
         const id = pendingPoseId;
         pendingPoseId = null;
         switchPose(id);
-        }
-    }
-});
-poseTween = tl
-    .to(interp, { t: 0.6, duration: accel,  ease: 'power2.in'  }) // accel
-    .to(interp, { t: 0.9, duration: cruise, ease: 'none'        }) // cruise
-    .to(interp, { t: 1.0, duration: decel,  ease: 'power2.out'  }); // decel
+      }
+    });
 }
 
 function applyVisibilityForPose(poseId){
@@ -506,6 +525,12 @@ function applyPose() {
         // Quick adjust pose duration with [ and ]
         if (e.key === '[') { POSE_DUR = Math.max(0.1, +(POSE_DUR - 0.1).toFixed(2)); console.log('POSE_DUR', POSE_DUR); }
         if (e.key === ']') { POSE_DUR = Math.min(3.0, +(POSE_DUR + 0.1).toFixed(2)); console.log('POSE_DUR', POSE_DUR); }
+        // Cycle global easing with 'e'
+        if (e.key === 'e') {
+          const idx = (EASE_MODES.indexOf(EASE_MODE) + 1) % EASE_MODES.length;
+          EASE_MODE = EASE_MODES[idx];
+          console.log('EASE_MODE →', EASE_MODE);
+        }
     };
 
     // Scroll to rotate the circle arc when pose 5 is active
