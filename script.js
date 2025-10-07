@@ -54,13 +54,13 @@ const BACKLASH_GAIN = 0.3;     // strength of settle if enabled
 // --- Clockwork stepping (discrete tween states) ---
 // Position stepping
 const ENABLE_STEPPED_TIME = true;  // quantize POSITION tween time into ticks
-const STEP_COUNT          = 20;     // ticks per move for position
-const STEP_JITTER         = 0.9;  // 0..0.5 of a step as per-bolt phase jitter
+const STEP_COUNT          = 12;     // ticks per move for position
+const STEP_JITTER         = 0.5;  // 0..0.5 of a step as per-bolt phase jitter
 
 // Rotation stepping (independent from position)
 const ENABLE_STEPPED_ROT  = true;  // quantize ROTATION tween time into ticks
 const ROT_STEP_COUNT      = 6;     // ticks per move for rotation
-const ROT_STEP_JITTER     = 0.05;  // 0..0.5 per-bolt phase jitter for rotation
+const ROT_STEP_JITTER     = 0.5 ;  // 0..0.5 per-bolt phase jitter for rotation
 
 const DASH_INDEX = BOLT_FILES.findIndex(p => p.includes('/-.svg')) >= 0
     ? BOLT_FILES.findIndex(p => p.includes('/-.svg'))
@@ -413,7 +413,6 @@ function applyPose() {
     }
     function poseCircle(){
         const r = Math.min(W,H) * 0.25 * SCALE;
-        const CIRCLE_FRACTION = 0.75; // bv. 270°
         const sweep = 360 * CIRCLE_FRACTION;
         const startAngle = circleRotDeg - sweep/2;
         const endAngle   = circleRotDeg + sweep/2;
@@ -533,7 +532,6 @@ function applyPose() {
         }
     };
 
-    // Scroll to rotate the circle arc when pose 5 is active
     canvas.addEventListener('wheel', (e) => {
         if (!ready) return;
         const delta = e.deltaY || 0;
@@ -566,7 +564,6 @@ function applyPose() {
         }
     }, { passive: false });
 
-    // --- Clickable shortcuts in the top bar ---
     (function bindShortcutClicks(){
         const nodes = document.querySelectorAll('#shortcuts .kbd');
         if (!nodes || !nodes.length) return;
