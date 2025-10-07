@@ -35,14 +35,13 @@
     </div>
     <canvas id="c"></canvas>
 
-    <!-- Plaats dit boven of onder je <canvas id="c"> in index.html -->
-        <div id="recorder-ui" style="position:fixed; left:900px; top:12px; z-index:9999; display:flex; gap:8px; font-family:system-ui;">
-        <button id="rec-start">Start recording</button>
-        <button id="rec-stop" disabled>Stop & download</button>
-        <span id="rec-status" style="margin-left:6px; opacity:.75;"></span>
-        </div>
+    <div id="recorder-ui" style="position:fixed; left:900px; top:12px; z-index:9999; display:flex; gap:8px; font-family:system-ui;">
+    <button id="rec-start">Start recording</button>
+    <button id="rec-stop" disabled>Stop & download</button>
+    <span id="rec-status" style="margin-left:6px; opacity:.75;"></span>
+    </div>
 
-        <script>
+    <script>
         (function(){
         const canvas = document.getElementById('c');
         if (!canvas) { console.warn('Canvas #c niet gevonden'); return; }
