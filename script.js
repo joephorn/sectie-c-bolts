@@ -36,9 +36,16 @@
     let arrowRotDeg = 0;
     let arrowPendingSteps = 0;
 
+    // --- Servo feel parameters ---
+    const POS_STEP = 0.75;    // px snap for position (0.5–2.0 typical)
+    const ROT_STEP = 1.0;     // deg snap for rotation (1–5 typical)
+    const SERVO_TICK = 0.015; // ~15ms micro delay per bolt for mechanical bank
+    const ENABLE_BACKLASH = false; // set true for tiny settle effect near the end
+    const BACKLASH_GAIN = 0.6;     // strength of settle if enabled
+
     const DASH_INDEX = BOLT_FILES.findIndex(p => p.includes('/-.svg')) >= 0
       ? BOLT_FILES.findIndex(p => p.includes('/-.svg'))
-      : 6; // fallback based on known order
+      : 6; // hardcoded fallback
 
     let jitterAmt = 0;        // 0..1 from the slider
     let jitterAngles = new Array(N).fill(0).map(() => (Math.random()*2 - 1)); // per-bolt direction [-1,1]
@@ -74,15 +81,12 @@
     Promise.all(BOLT_FILES.map(importSymbol))
         .then(defs => {
         symbols.push(...defs);
-        // Plaats één instance per symbool in dezelfde volgorde als BOLT_FILES
         bolts = symbols.map(def => {
             const it = def.place([W*0.5, H*0.5]);
             it.applyMatrix = true;
-            it.scaling = SCALE; // scale the SVG bolt itself
+            it.scaling = SCALE;
             return it;
         });
-        // startpose zodra alle SVG's klaar zijn
-        // jitterAngles = new Array(N).fill(0).map(() => (Math.random()*2 - 1)); // removed re-seed for stability
         setTargets(poseLine());
         ready = true;
         })
@@ -100,15 +104,6 @@
         const a = (startDeg + (endDeg - startDeg)*t) * Math.PI/180;
         p.add(new Point(cx + Math.cos(a)*r, cy + Math.sin(a)*r));
         }
-        p.smooth({type:'continuous'});
-        return p;
-    }
-    function makeCirclePath(cx, cy, r){
-        return new Path.Circle(new Point(cx,cy), r);
-    }
-    function makePolyline(points){
-        const p = new Path({ strokeColor:null });
-        points.forEach(pt => p.add(new Point(pt[0], pt[1])));
         p.smooth({type:'continuous'});
         return p;
     }
@@ -172,36 +167,36 @@
     let poseTween = null;     // gsap tween handle for interp
 
     function consumeLineQueueIfNeeded(){
-        if (currentPoseId !== 1) return false; // only for the line pose
+        if (currentPoseId !== 1) return false;
         const pending = linePendingSteps;
         if (!pending) return false;
         const dir = Math.sign(pending);       // take one step toward zero
         linePendingSteps -= dir;
         const step = 45;
-        lineRotDeg = (lineRotDeg - dir * step) % 360; // negative keeps scroll “natural”
+        lineRotDeg = (lineRotDeg - dir * step) % 360; // negative keeps scroll natural
         if (lineRotDeg < 0) lineRotDeg += 360;
         setTargets(poseLine(), 0.1);          // kick off a single tween step
         return true;
     }
     function consumeCircleQueueIfNeeded(){
-        if (currentPoseId !== 5) return false; // alleen in circle-pose
+        if (currentPoseId !== 5) return false;
         const pending = circlePendingSteps;
         if (!pending) return false;
         const dir = Math.sign(pending);     // neem 1 stap richting 0
         circlePendingSteps -= dir;
-        const step = 22.5;                    // graden per queued stap (vergroot van 5° naar 45°)
-        circleRotDeg = (circleRotDeg - dir * step) % 360; // negatief voelt “natuurlijk”
+        const step = 22.5;
+        circleRotDeg = (circleRotDeg - dir * step) % 360; // negative keeps scroll natural
         if (circleRotDeg < 0) circleRotDeg += 360;
         setTargets(poseCircle(), 0.1);     // kleine tween per stap
         return true;
     }
     function consumeArrowQueueIfNeeded(){
-        if (currentPoseId !== 6) return false;     // only for arrow pose
+        if (currentPoseId !== 6) return false;
         const pending = arrowPendingSteps;
         if (!pending) return false;
         const dir = Math.sign(pending);
         arrowPendingSteps -= dir;
-        const step = 90;                            // degrees per step
+        const step = 90;
         arrowRotDeg = (arrowRotDeg - dir * step) % 360; // negative keeps scroll natural
         if (arrowRotDeg < 0) arrowRotDeg += 360;
         setTargets(poseArrowRight(), 0.15);
@@ -215,21 +210,27 @@
         interp.t = 0;
         if (poseTween) poseTween.kill();
         isAnimating = true;
-        poseTween = gsap.to(interp, { 
-            duration: dur, 
-            t: 1, 
-            ease: 'power2.inOut',
-            onComplete: () => {
-                isAnimating = false;
-                poseTween = null;
-                if (consumeLineQueueIfNeeded() || consumeCircleQueueIfNeeded() || consumeArrowQueueIfNeeded()) return;
-                if (pendingPoseId !== null) {
-                const id = pendingPoseId;
-                pendingPoseId = null;
-                switchPose(id);
-                }
+
+        const accel  = dur * 0.35; // accelerate fast
+        const cruise = dur * 0.30; // flat speed
+        const decel  = dur * 0.35; // smooth brake
+
+        const tl = gsap.timeline({
+        onComplete: () => {
+            isAnimating = false;
+            poseTween = null;
+            if (consumeLineQueueIfNeeded() || consumeCircleQueueIfNeeded() || consumeArrowQueueIfNeeded()) return;
+            if (pendingPoseId !== null) {
+            const id = pendingPoseId;
+            pendingPoseId = null;
+            switchPose(id);
             }
-        });
+        }
+    });
+    poseTween = tl
+      .to(interp, { t: 0.6, duration: accel,  ease: 'power2.in'  }) // accel
+      .to(interp, { t: 0.9, duration: cruise, ease: 'none'        }) // cruise
+      .to(interp, { t: 1.0, duration: decel,  ease: 'power2.out'  }); // decel
     }
 
     function applyVisibilityForPose(poseId){
@@ -241,18 +242,31 @@
     }
 
     function applyPose(){
-        const t = interp.t;
-        for (let i = 0; i < bolts.length; i++){
-          const a = fromPose[i] || { pos: new Point(W*0.5,H*0.5), rot: 0 };
-          const b = toPose[i]   || a;
-          const p = a.pos.add( b.pos.subtract(a.pos).multiply(t) );
-          const rBase = a.rot + (b.rot - a.rot) * t; // base rotation without jitter
-          lastBaseRot[i] = rBase;                    // persist base rotation for next pose switch
-          const jitterDeg = jitterAmt * JITTER_MAX_DEG * (jitterAngles[i] || 0);
-          bolts[i].position = p;
-          bolts[i].rotation = rBase + jitterDeg;     // apply jitter once, consistently
-        }
+  const t = interp.t;
+  for (let i = 0; i < bolts.length; i++){
+    const a = fromPose[i] || { pos: new Point(W*0.5,H*0.5), rot: 0 };
+    const b = toPose[i]   || a;
+
+    // basis interpolatie (géén micro-stagger, géén quantize)
+    const p = a.pos.add( b.pos.subtract(a.pos).multiply(t) );
+    let rBase = a.rot + (b.rot - a.rot) * t; // rot zonder jitter
+
+    // optionele, heel lichte settle/backlash aan het eind (servo vibe)
+    if (ENABLE_BACKLASH && t > 0.98) {
+      const signRot = Math.sign((b.rot || 0) - (a.rot || 0)) || 0;
+      const settle = (1 - t) * BACKLASH_GAIN; // loopt naar 0 bij einde
+      rBase += settle * signRot;              // enkele tienden graad max
     }
+
+    lastBaseRot[i] = rBase; // bewaren voor volgende pose-switch
+
+    // jitter blijft additief
+    const jitterDeg = jitterAmt * JITTER_MAX_DEG * (jitterAngles[i] || 0);
+
+    bolts[i].position = p;
+    bolts[i].rotation = rBase + jitterDeg;
+  }
+}
 
     // ----------------- Define Poses -----------------
     function poseLine(){
@@ -369,14 +383,14 @@
     
     function poseCross(){
         const offsets = [
-          new Point(0, -2*SPACING + SPACING/4),  // S (top far)
-          new Point(0, -1*SPACING + SPACING/4),  // E (top near)
-          new Point(-2*SPACING + SPACING/4, 0),  // C (left far)
-          new Point(-1*SPACING + SPACING/4, 0),  // T (left near)
-          new Point( 1*SPACING - SPACING/4, 0),  // I (right near)
-          new Point( 2*SPACING - SPACING/4, 0),  // E (right far)
-          new Point(0,  1*SPACING - SPACING/4),  // - (just above bottom)
-          new Point(0,  2*SPACING - SPACING/4)   // C-inverted (bottom)
+          new Point(0, -2*SPACING + SPACING/4),  // S
+          new Point(0, -1*SPACING + SPACING/4),  // E
+          new Point(-2*SPACING + SPACING/4, 0),  // C
+          new Point(-1*SPACING + SPACING/4, 0),  // T
+          new Point( 1*SPACING - SPACING/4, 0),  // I
+          new Point( 2*SPACING - SPACING/4, 0),  // E
+          new Point(0,  1*SPACING - SPACING/4),  // -
+          new Point(0,  2*SPACING - SPACING/4)   // C-inverted
         ];
         const cx = centerX, cy = centerY;
         const targets = offsets.slice(0, N).map(off => ({
