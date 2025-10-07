@@ -38,28 +38,26 @@ const ROT_DUR_LINE   = 0.20;
 const ROT_DUR_CIRCLE = 0.20;
 const ROT_DUR_ARROW  = 0.20;
 
-// Pose transition duration (used when switching poses)
-
-let POSE_DUR = 0.5; // seconds
+let POSE_DUR = 0.5;
 
 // --- Global easing for pose transitions ---
 const EASE_MODES = ['trapezoid','power2','power3','expo','sine','back'];
 let EASE_MODE = 'power3'; // change to one of EASE_MODES
 
 // --- Servo feel parameters ---
-const ENABLE_BACKLASH = false; // set true for tiny settle effect near the end
-const BACKLASH_GAIN = 1;     // strength of settle if enabled
+const ENABLE_BACKLASH = false;
+const BACKLASH_GAIN = 1;
 
 // --- Clockwork stepping (discrete tween states) ---
 // Position stepping
-const ENABLE_STEPPED_TIME = true;  // quantize POSITION tween time into ticks
-const STEP_COUNT          = 12;     // ticks per move for position
-const STEP_JITTER         = 0.5;  // 0..0.5 of a step as per-bolt phase jitter
+const ENABLE_STEPPED_TIME = true;
+const STEP_COUNT          = 12;
+const STEP_JITTER         = 0.5;
 
 // Rotation stepping (independent from position)
-const ENABLE_STEPPED_ROT  = true;  // quantize ROTATION tween time into ticks
-const ROT_STEP_COUNT      = 6;     // ticks per move for rotation
-const ROT_STEP_JITTER     = 1 ;  // 0..0.5 per-bolt phase jitter for rotation
+const ENABLE_STEPPED_ROT  = true;
+const ROT_STEP_COUNT      = 6;
+const ROT_STEP_JITTER     = 1;
 
 const _dashIdx = BOLT_FILES.findIndex(p => p.includes('/-.svg'));
 const DASH_INDEX = _dashIdx >= 0 ? _dashIdx : 6; // hardcoded fallback
@@ -127,7 +125,7 @@ function makeArcPath(cx, cy, r, startDeg, endDeg){
 function makePolylineSharp(points){
     const p = new Path({ strokeColor: null });
     points.forEach(pt => p.add(new Point(pt[0], pt[1])));
-    return p; // no smoothing -> crisp chevron
+    return p;
 }
 
 // Verdeel N items over 1..k paden, proportioneel op lengte
@@ -149,8 +147,7 @@ function distributeOnPaths(paths, count, align='upright'){
         const tan = path.getTangentAt(offset) || new Point(1,0);
         const rot = (align === 'tangent') ? tan.angle
                     : (align === 'fixed0') ? 0
-                    : 0; // 'upright' default (0°)
-        // center everything once here (no per-pose translate calls)
+                    : 0;
         const centeredPt = pt.add(new Point(centerX, centerY));
         targets.push({ pos: centeredPt, rot });
     }
@@ -222,9 +219,9 @@ function consumeArrowQueueIfNeeded(){
 function _startPoseTween(dur, onComplete){
   if (poseTween) poseTween.kill();
   if (EASE_MODE === 'trapezoid'){
-    const accel  = dur * 0.35;  // accelerate fast
-    const cruise = dur * 0.30;  // constant speed
-    const decel  = dur * 0.35;  // smooth brake
+    const accel  = dur * 0.35;
+    const cruise = dur * 0.30;
+    const decel  = dur * 0.35;
     const tl = gsap.timeline({ onComplete });
     poseTween = tl
       .to(interp, { t: 0.6, duration: accel,  ease: 'power2.in'  })
@@ -310,7 +307,7 @@ function applyPose() {
             rBase += settle * signRot;                  // few tenths of a degree max
         }
 
-        lastBaseRot[i] = rBase; // persist base rotation for next pose switch
+        lastBaseRot[i] = rBase;
 
         // jitter stays additive on top
         const jitterDeg = jitterAmt * JITTER_MAX_DEG * (jitterAngles[i] || 0);
@@ -336,7 +333,7 @@ function applyPose() {
             bolts[i].position = b.pos.clone();
             const jitterDegFinal = jitterAmt * JITTER_MAX_DEG * (jitterAngles[i] || 0);
             bolts[i].rotation = b.rot + jitterDegFinal;
-            lastBaseRot[i] = b.rot; // base rot zonder jitter bewaren
+            lastBaseRot[i] = b.rot;
         }
     }
 }
@@ -358,11 +355,11 @@ function applyPose() {
     function poseOffsetLine(){
         const totalLength = SPACING * (N - 1);
         const xStart = -totalLength / 2 * 0.85;
-        const OFF = SPACING * 0.25; // vertical offset amplitude
+        const OFF = SPACING * 0.25;
         const targets = [];
         for (let i = 0; i < N; i++) {
             const x = xStart + i * SPACING*0.85;
-            const y = (i % 2 === 0 ? -OFF : OFF); // alternate above/below
+            const y = (i % 2 === 0 ? -OFF : OFF);
             const pos = new Point(centerX + x, centerY + y);
             targets.push({ pos, rot: 0 }); // keep upright; jitter handles slight variation
         }
@@ -423,9 +420,9 @@ function applyPose() {
         const halfW = halfH * 0.6;                    // narrower horizontal half-width
 
         const basePts = [
-            [-halfW, -halfH],  // upper-left
-            [ halfW,   0     ],// right tip
-            [-halfW,  halfH]   // lower-left
+            [-halfW, -halfH],
+            [ halfW,   0     ],
+            [-halfW,  halfH]
         ];
 
         // rotate by arrowRotDeg around origin (rotate the path, not the SVGs)
@@ -455,14 +452,14 @@ function applyPose() {
     
     function poseCross(){
         const offsets = [
-          new Point(0, -2*SPACING + SPACING/4),  // S
-          new Point(0, -1*SPACING + SPACING/4),  // E
-          new Point(-2*SPACING + SPACING/4, 0),  // C
-          new Point(-1*SPACING + SPACING/4, 0),  // T
-          new Point( 1*SPACING - SPACING/4, 0),  // I
-          new Point( 2*SPACING - SPACING/4, 0),  // E
-          new Point(0,  1*SPACING - SPACING/4),  // -
-          new Point(0,  2*SPACING - SPACING/4)   // C-inverted
+          new Point(0, -2*SPACING + SPACING/4),
+          new Point(0, -1*SPACING + SPACING/4),
+          new Point(-2*SPACING + SPACING/4, 0),
+          new Point(-1*SPACING + SPACING/4, 0),
+          new Point( 1*SPACING - SPACING/4, 0),
+          new Point( 2*SPACING - SPACING/4, 0),
+          new Point(0,  1*SPACING - SPACING/4),
+          new Point(0,  2*SPACING - SPACING/4)
         ];
         const cx = centerX, cy = centerY;
         const targets = offsets.slice(0, N).map(off => ({
@@ -477,14 +474,14 @@ function applyPose() {
         const r2 = Math.SQRT2;
 
         const offsets = [
-            new Point(-2*s/r2, -2*s/r2),   // top far
-            new Point(-s/r2,  -s/r2),     // top near
-            new Point(-2*s/r2,  2*s/r2),   // left far (rotated)
-            new Point(-s/r2,   s/r2),     // left near (rotated)
-            new Point(s/r2,   -s/r2),     // right near (rotated)
-            new Point(2*s/r2, -2*s/r2),   // right far (rotated)
-            new Point(s/r2,    s/r2),     // bottom near (rotated)
-            new Point(2*s/r2,  2*s/r2)    // bottom far (rotated)
+            new Point(-2*s/r2, -2*s/r2),
+            new Point(-s/r2,  -s/r2),
+            new Point(-2*s/r2,  2*s/r2),
+            new Point(-s/r2,   s/r2),
+            new Point(s/r2,   -s/r2),
+            new Point(2*s/r2, -2*s/r2),
+            new Point(s/r2,    s/r2),
+            new Point(2*s/r2,  2*s/r2)
         ];
 
         const cx = centerX, cy = centerY;
@@ -538,26 +535,26 @@ function applyPose() {
             e.preventDefault();
             const dir = Math.sign(delta);
             if (dir !== 0) {
-                linePendingSteps += dir;                 // enqueue a step
-                if (!isAnimating) consumeLineQueueIfNeeded(); // start processing if idle
+                linePendingSteps += dir;
+                if (!isAnimating) consumeLineQueueIfNeeded();
             }
             return;
         }
-        if (currentPoseId === 5) { // circle pose: rotate in queued steps
+        if (currentPoseId === 5) {
             e.preventDefault();
             const dir = Math.sign(delta);
             if (dir !== 0) {
-                circlePendingSteps += dir;                    // enqueue stap
-                if (!isAnimating) consumeCircleQueueIfNeeded(); // start als idle
+                circlePendingSteps += dir;
+                if (!isAnimating) consumeCircleQueueIfNeeded();
             }
             return;
         }
-        if (currentPoseId === 6) { // arrow pose: rotate in queued 90° steps
+        if (currentPoseId === 6) {
             e.preventDefault();
             const dir = Math.sign(delta);
             if (dir !== 0) {
-                arrowPendingSteps += dir;                     // enqueue step
-                if (!isAnimating) consumeArrowQueueIfNeeded(); // start processing if idle
+                arrowPendingSteps += dir;
+                if (!isAnimating) consumeArrowQueueIfNeeded();
             }
             return;
         }
@@ -572,7 +569,7 @@ function applyPose() {
                 const attr = el.getAttribute('data-key');
                 const key = attr ? parseInt(attr, 10) : parseInt((el.textContent||'').trim(), 10);
                 if (!isNaN(key)) {
-                    switchPose(key); // uses internal queuing/locks
+                    switchPose(key);
                 }
             });
         });
