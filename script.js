@@ -25,18 +25,24 @@ const BASE_SPACING = 110;
 const SPACING = BASE_SPACING * SCALE;
 const JITTER_MAX_DEG = 25;
 
+// Mid-animation rotation (driven by jitter slider): ramp in, then click off
+const MIDJIT_ENABLE   = true;   // master toggle
+const MIDJIT_IN_START = 0.10;   // tween t waar extra rotatie begint (0..1)
+const MIDJIT_IN_END   = 0.90;   // tween t waar maximale extra rotatie is bereikt
+const MIDJIT_CLICK_T  = 0.94;   // vanaf deze t valt extra rotatie weg (klik naar base)
+
 let currentPoseId = 1;
 let lineRotDeg = 0;
 let circleRotDeg = 0;
 let linePendingSteps = 0;
 let circlePendingSteps = 0;
-const CIRCLE_FRACTION = 0.80;
+const CIRCLE_FRACTION = 0.8;
 
 let arrowRotDeg = 0;
 let arrowPendingSteps = 0;
-const ROT_DUR_LINE   = 0.20;
-const ROT_DUR_CIRCLE = 0.20;
-const ROT_DUR_ARROW  = 0.20;
+const ROT_DUR_LINE   = 0.2;
+const ROT_DUR_CIRCLE = 0.2;
+const ROT_DUR_ARROW  = 0.2;
 
 let POSE_DUR = 0.5;
 
@@ -51,12 +57,12 @@ const BACKLASH_GAIN = 1;
 // --- Clockwork stepping (discrete tween states) ---
 // Position stepping
 const ENABLE_STEPPED_TIME = true;
-const STEP_COUNT          = 12;
+const STEP_COUNT          = 3;
 const STEP_JITTER         = 0.5;
 
 // Rotation stepping (independent from position)
 const ENABLE_STEPPED_ROT  = true;
-const ROT_STEP_COUNT      = 6;
+const ROT_STEP_COUNT      = 3;
 const ROT_STEP_JITTER     = 1;
 
 const _dashIdx = BOLT_FILES.findIndex(p => p.includes('/-.svg'));
@@ -309,9 +315,6 @@ function applyPose() {
 
         lastBaseRot[i] = rBase;
 
-        // jitter stays additive on top
-        const jitterDeg = jitterAmt * JITTER_MAX_DEG * (jitterAngles[i] || 0);
-
         // mini gravity snap for position near the end
         let posFinal = p;
         if (tPosUsed > 0.97) {
@@ -324,15 +327,28 @@ function applyPose() {
         let rotFinal = rBase;
         if (tRotUsed > 0.97) {
             const rotDiff = (b.rot || 0) - rBase;
-            rotFinal = rBase + rotDiff * 0.3; // pull 30% toward target rot
+            rotFinal = rBase + rotDiff * 0.9; // pull 30% toward target rot
         }
-        bolts[i].rotation = rotFinal + jitterDeg;
+
+        // mid-animation additive rotation driven by jitter slider: ramp in, then click off near the end
+        let addDeg = 0;
+        if (MIDJIT_ENABLE) {
+            if (tGlobal < MIDJIT_CLICK_T) {
+                const denom = Math.max(1e-6, MIDJIT_IN_END - MIDJIT_IN_START);
+                const u = (tGlobal - MIDJIT_IN_START) / denom; // kan <0..>1 zijn
+                const s = u <= 0 ? 0 : (u >= 1 ? 1 : (u*u*(3 - 2*u))); // smoothstep 0..1
+                addDeg = s * jitterAmt * JITTER_MAX_DEG * (jitterAngles[i] || 0);
+            } else {
+                addDeg = 0; // "klik" terug naar basis
+            }
+        }
+        bolts[i].rotation = rotFinal + addDeg;
 
         // --- hard snap to final pose at the very end (keep jitter) ---
         if (interp.t >= 1) {
             bolts[i].position = b.pos.clone();
-            const jitterDegFinal = jitterAmt * JITTER_MAX_DEG * (jitterAngles[i] || 0);
-            bolts[i].rotation = b.rot + jitterDegFinal;
+            // settle perfectly aligned at the very end (no jitter)
+            bolts[i].rotation = b.rot;
             lastBaseRot[i] = b.rot;
         }
     }
