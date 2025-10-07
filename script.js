@@ -31,7 +31,7 @@ let lineRotDeg = 0;
 let circleRotDeg = 0;
 let linePendingSteps = 0;
 let circlePendingSteps = 0;
-const CIRCLE_FRACTION = 0.75;
+const CIRCLE_FRACTION = 0.80;
 
 let arrowRotDeg = 0;
 let arrowPendingSteps = 0;
@@ -203,7 +203,7 @@ function consumeCircleQueueIfNeeded(){
     if (!pending) return false;
     const dir = Math.sign(pending);     // neem 1 stap richting 0
     circlePendingSteps -= dir;
-    const step = 45;
+    const step = 36;
     circleRotDeg = (circleRotDeg - dir * step) % 360; // negative keeps scroll natural
     if (circleRotDeg < 0) circleRotDeg += 360;
     setTargets(poseCircle(), ROT_DUR_CIRCLE);     // kleine tween per stap
@@ -215,7 +215,7 @@ function consumeArrowQueueIfNeeded(){
     if (!pending) return false;
     const dir = Math.sign(pending);
     arrowPendingSteps -= dir;
-    const step = 90;
+    const step = 45;
     arrowRotDeg = (arrowRotDeg - dir * step) % 360; // negative keeps scroll natural
     if (arrowRotDeg < 0) arrowRotDeg += 360;
     setTargets(poseArrowRight(), ROT_DUR_ARROW);
