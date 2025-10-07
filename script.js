@@ -25,7 +25,6 @@ const BASE_SPACING = 110;
 const SPACING = BASE_SPACING * SCALE;
 const JITTER_MAX_DEG = 25;
 
-let CIRCLE_ROT = 0;
 let currentPoseId = 1;
 let lineRotDeg = 0;
 let circleRotDeg = 0;
@@ -48,8 +47,8 @@ const EASE_MODES = ['trapezoid','power2','power3','expo','sine','back'];
 let EASE_MODE = 'power3'; // change to one of EASE_MODES
 
 // --- Servo feel parameters ---
-const ENABLE_BACKLASH = true; // set true for tiny settle effect near the end
-const BACKLASH_GAIN = 0.3;     // strength of settle if enabled
+const ENABLE_BACKLASH = false; // set true for tiny settle effect near the end
+const BACKLASH_GAIN = 1;     // strength of settle if enabled
 
 // --- Clockwork stepping (discrete tween states) ---
 // Position stepping
@@ -60,11 +59,10 @@ const STEP_JITTER         = 0.5;  // 0..0.5 of a step as per-bolt phase jitter
 // Rotation stepping (independent from position)
 const ENABLE_STEPPED_ROT  = true;  // quantize ROTATION tween time into ticks
 const ROT_STEP_COUNT      = 6;     // ticks per move for rotation
-const ROT_STEP_JITTER     = 0.5 ;  // 0..0.5 per-bolt phase jitter for rotation
+const ROT_STEP_JITTER     = 1 ;  // 0..0.5 per-bolt phase jitter for rotation
 
-const DASH_INDEX = BOLT_FILES.findIndex(p => p.includes('/-.svg')) >= 0
-    ? BOLT_FILES.findIndex(p => p.includes('/-.svg'))
-    : 6; // hardcoded fallback
+const _dashIdx = BOLT_FILES.findIndex(p => p.includes('/-.svg'));
+const DASH_INDEX = _dashIdx >= 0 ? _dashIdx : 6; // hardcoded fallback
 
 let jitterAmt = 0;        // 0..1 from the slider
 let jitterAngles = new Array(N).fill(0).map(() => (Math.random()*2 - 1)); // per-bolt direction [-1,1]
@@ -137,25 +135,24 @@ function distributeOnPaths(paths, count, align='upright'){
     const lengths = paths.map(p => p.length);
     const total = lengths.reduce((a,b)=>a+b, 0);
     const targets = [];
-
     for (let i=0;i<count;i++){
-    const t = (i + 0.5) / count;
-    let s = t * total;
-    let pathIndex = 0;
-    while (s > lengths[pathIndex] && pathIndex < paths.length-1){
-        s -= lengths[pathIndex];
-        pathIndex++;
-    }
-    const path = paths[pathIndex];
-    const o = Math.min(s, path.length);
-    const pt = path.getPointAt(o);
-    const tan = path.getTangentAt(o) || new Point(1,0);
-    const rot = (align === 'tangent') ? tan.angle
-                : (align === 'fixed0') ? 0
-                : 0; // 'upright' default (0°)
-    // center everything once here (no per-pose translate calls)
-    const centeredPt = pt.add(new Point(centerX, centerY));
-    targets.push({ pos: centeredPt, rot });
+        const t = (i + 0.5) / count;
+        let s = t * total;
+        let pathIndex = 0;
+        while (s > lengths[pathIndex] && pathIndex < paths.length-1){
+            s -= lengths[pathIndex];
+            pathIndex++;
+        }
+        const path = paths[pathIndex];
+        const offset = Math.min(Math.max(0, s), path.length);
+        const pt = path.getPointAt(offset);
+        const tan = path.getTangentAt(offset) || new Point(1,0);
+        const rot = (align === 'tangent') ? tan.angle
+                    : (align === 'fixed0') ? 0
+                    : 0; // 'upright' default (0°)
+        // center everything once here (no per-pose translate calls)
+        const centeredPt = pt.add(new Point(centerX, centerY));
+        targets.push({ pos: centeredPt, rot });
     }
     return targets;
 }
@@ -506,14 +503,17 @@ function applyPose() {
         }
         currentPoseId = id;
         let targets;
-        if (id===1) targets = poseLine();
-        if (id===2) targets = poseOffsetLine();
-        if (id===3) targets = poseArcUp();
-        if (id===4) targets = poseArcDown();
-        if (id===5) targets = poseCircle();
-        if (id===6) targets = poseArrowRight();
-        if (id===7) targets = poseCross();
-        if (id===8) targets = poseX();
+        switch (id) {
+          case 1: targets = poseLine(); break;
+          case 2: targets = poseOffsetLine(); break;
+          case 3: targets = poseArcUp(); break;
+          case 4: targets = poseArcDown(); break;
+          case 5: targets = poseCircle(); break;
+          case 6: targets = poseArrowRight(); break;
+          case 7: targets = poseCross(); break;
+          case 8: targets = poseX(); break;
+          default: break;
+        }
         if (targets) setTargets(targets, POSE_DUR);
         applyVisibilityForPose(id);
     }
@@ -522,13 +522,12 @@ function applyPose() {
         const n = parseInt(e.key, 10);
         if (n>=1 && n<=9) switchPose(n);
         // Quick adjust pose duration with [ and ]
-        if (e.key === '[') { POSE_DUR = Math.max(0.1, +(POSE_DUR - 0.1).toFixed(2)); console.log('POSE_DUR', POSE_DUR); }
-        if (e.key === ']') { POSE_DUR = Math.min(3.0, +(POSE_DUR + 0.1).toFixed(2)); console.log('POSE_DUR', POSE_DUR); }
+        if (e.key === '[') { POSE_DUR = Math.max(0.1, +(POSE_DUR - 0.1).toFixed(2)); }
+        if (e.key === ']') { POSE_DUR = Math.min(3.0, +(POSE_DUR + 0.1).toFixed(2)); }
         // Cycle global easing with 'e'
         if (e.key === 'e') {
           const idx = (EASE_MODES.indexOf(EASE_MODE) + 1) % EASE_MODES.length;
           EASE_MODE = EASE_MODES[idx];
-          console.log('EASE_MODE →', EASE_MODE);
         }
     };
 
