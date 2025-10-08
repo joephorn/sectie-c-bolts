@@ -27,6 +27,10 @@
         <div class="item"><span class="kbd" data-key="7">7</span> +</div>
         <div class="item"><span class="kbd" data-key="8">8</span> x</div>
 
+        <div class="item">
+            <button id="arrange-ltr" title="Reorder to 'SECTIE-C-inverted' left→right">Arrange SECTIE‑C L→R</button>
+        </div>
+
         <div class="item" style="margin-left:auto">
             Jitter
             <input id="jitter" type="range" min="0" max="100" value="100" step="1">
@@ -35,10 +39,11 @@
     </div>
     <canvas id="c"></canvas>
 
-    <div id="recorder-ui" style="position:fixed; left:900px; top:12px; z-index:9999; display:flex; gap:8px; font-family:system-ui;">
-    <button id="rec-start">Start recording</button>
-    <button id="rec-stop" disabled>Stop & download</button>
-    <span id="rec-status" style="margin-left:6px; opacity:.75;"></span>
+    <div id="recorder-ui" style="position:fixed; left:950px; top:20px; z-index:9999; display:flex; gap:8px; font-family:system-ui;">
+      <button id="rec-start-webm">Start WebM</button>
+      <button id="rec-start-mp4">Start MP4</button>
+      <button id="rec-stop" disabled>Stop & download</button>
+      <span id="rec-status" style="margin-left:6px; opacity:.75;"></span>
     </div>
 
     <script>
@@ -47,86 +52,108 @@
         if (!canvas) { console.warn('Canvas #c niet gevonden'); return; }
 
         // UI
-        const btnStart = document.getElementById('rec-start');
+        const btnStartWebM = document.getElementById('rec-start-webm');
+        const btnStartMP4  = document.getElementById('rec-start-mp4');
         const btnStop  = document.getElementById('rec-stop');
         const statusEl = document.getElementById('rec-status');
 
         // Settings
-        const FPS = 60; // kies 30 of 60; neemt de framerate over van captureStream
-        const PREFERRED_TYPES = [
+        const FPS = 30;
+        const WEBM_TYPES = [
             'video/webm;codecs=vp9',
             'video/webm;codecs=vp8',
             'video/webm'
+        ];
+        const MP4_TYPES = [
+            'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+            'video/mp4'
         ];
 
         let mediaRecorder = null;
         let chunks = [];
         let stream = null;
 
-        function pickMimeType() {
-            for (const t of PREFERRED_TYPES) {
-            if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) return t;
+        function pickMimeType(list) {
+            for (const t of list) {
+                if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) return t;
             }
-            return ''; // laat browser kiezen
+            return '';
         }
 
-        function filename() {
+        function filename(ext) {
             const d = new Date();
             const pad = n => String(n).padStart(2,'0');
-            return `recording_${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}.webm`;
+            const e = (ext || 'webm').replace(/^\./,'');
+            return `recording_${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}.${e}`;
         }
 
-        btnStart.addEventListener('click', () => {
+        function startRecording(preferredList, ext){
             try {
-            // stream exact op canvas-resolutie (afhankelijk van jouw canvas.width/height)
-            stream = canvas.captureStream(FPS);
-            const type = pickMimeType();
-            mediaRecorder = new MediaRecorder(stream, type ? { mimeType: type } : {});
-            chunks = [];
-
-            mediaRecorder.ondataavailable = (e) => {
-                if (e.data && e.data.size > 0) chunks.push(e.data);
-            };
-
-            mediaRecorder.onstart = () => {
-                btnStart.disabled = true;
-                btnStop.disabled = false;
-                statusEl.textContent = 'Recording…';
-            };
-
-            mediaRecorder.onstop = () => {
-                btnStart.disabled = false;
-                btnStop.disabled = true;
-                statusEl.textContent = '';
-                // bouw blob en download
-                const blob = new Blob(chunks, { type: mediaRecorder.mimeType || 'video/webm' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = filename();
-                document.body.appendChild(a);
-                a.click();
-                setTimeout(() => {
-                URL.revokeObjectURL(url);
-                a.remove();
-                }, 1000);
-                // cleanup
-                stream.getTracks().forEach(t => t.stop());
-                stream = null;
-                mediaRecorder = null;
+                const type = pickMimeType(preferredList);
+                if (!type) {
+                    statusEl.textContent = (ext === 'mp4') ? 'MP4 opname niet ondersteund in deze browser.' : 'Recording niet ondersteund.';
+                    return;
+                }
+                // schaal main canvas-buffers voor opname (max ~4k)
+                window.dispatchEvent(new CustomEvent('recorder:start', { detail: { targetW: 4096, targetH: 4096 } }));
+                // stream exact op canvas-resolutie (afhankelijk van jouw canvas.width/height)
+                stream = canvas.captureStream(FPS);
+                const opts = { mimeType: type };
+                // lichte bitrate boost voor kwaliteit
+                opts.videoBitsPerSecond = 12_000_000; // ~12 Mbps
+                mediaRecorder = new MediaRecorder(stream, opts);
                 chunks = [];
-            };
 
-            mediaRecorder.start(); // je kunt ook een timeslice ms meegeven, bv. mediaRecorder.start(250)
+                mediaRecorder.ondataavailable = (e) => {
+                    if (e.data && e.data.size > 0) chunks.push(e.data);
+                };
+
+                mediaRecorder.onstart = () => {
+                    if (btnStartWebM) btnStartWebM.disabled = true;
+                    if (btnStartMP4)  btnStartMP4.disabled  = true;
+                    btnStop.disabled = false;
+                    statusEl.textContent = `Recording (${ext.toUpperCase()})…`;
+                };
+
+                mediaRecorder.onstop = () => {
+                    if (btnStartWebM) btnStartWebM.disabled = false;
+                    if (btnStartMP4)  btnStartMP4.disabled  = false;
+                    btnStop.disabled = true;
+                    statusEl.textContent = '';
+                    // herstel canvas buffers
+                    window.dispatchEvent(new CustomEvent('recorder:stop'));
+                    // bouw blob en download
+                    const blob = new Blob(chunks, { type: mediaRecorder.mimeType || (ext === 'mp4' ? 'video/mp4' : 'video/webm') });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = filename(ext);
+                    document.body.appendChild(a);
+                    a.click();
+                    setTimeout(() => {
+                        URL.revokeObjectURL(url);
+                        a.remove();
+                    }, 1000);
+                    // cleanup
+                    try { stream.getTracks().forEach(t => t.stop()); } catch(_){}
+                    stream = null;
+                    mediaRecorder = null;
+                    chunks = [];
+                };
+
+                mediaRecorder.start(250); // timeslice voor vloeiendere write
             } catch (err) {
-            console.error('Recorder start error:', err);
-            statusEl.textContent = 'Recording niet ondersteund in deze browser.';
+                console.error('Recorder start error:', err);
+                statusEl.textContent = 'Recording niet gestart.';
             }
-        });
+        }
+
+        if (btnStartWebM) btnStartWebM.addEventListener('click', () => startRecording(WEBM_TYPES, 'webm'));
+        if (btnStartMP4)  btnStartMP4.addEventListener('click', () => startRecording(MP4_TYPES, 'mp4'));
 
         btnStop.addEventListener('click', () => {
             if (mediaRecorder && mediaRecorder.state === 'recording') {
-            mediaRecorder.stop();
+                mediaRecorder.stop();
             }
         });
 

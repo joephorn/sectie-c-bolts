@@ -2,8 +2,8 @@
 // ----------------- Setup Paper -----------------
 const canvas = document.getElementById('c');
 if (!canvas) { console.error('Canvas #c not found'); return; }
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight; 
+canvas.width = window.innerWidth; //moet 4k worden bij record
+canvas.height = window.innerHeight;  //moet 4k worden bij record
 paper.setup(canvas);
 const { Path, Point, view, project, SymbolDefinition, Tool } = paper;
 const tool = new Tool();
@@ -24,6 +24,7 @@ const SCALE = 0.75;
 const BASE_SPACING = 110;
 const SPACING = BASE_SPACING * SCALE;
 const JITTER_MAX_DEG = 50;
+const END_JITTER_MAX_DEG = 7;
 
 // Mid-animation rotation (driven by jitter slider): ramp in, then click off
 const MIDJIT_ENABLE   = true;   // master toggle
@@ -68,8 +69,19 @@ const ROT_STEP_JITTER     = 1;
 const _dashIdx = BOLT_FILES.findIndex(p => p.includes('/-.svg'));
 const DASH_INDEX = _dashIdx >= 0 ? _dashIdx : 6; // hardcoded fallback
 
+// Derive a logical key from the file path
+function keyFromPath(p){
+    const f = (p || '').split('/').pop() || '';
+    if (f === '-.svg') return '-';
+    return f.replace(/\.svg$/,''); // 'S','E','C','T','I','E','C-inverted'
+}
+
+// Track a direct reference to the dash item regardless of array index
+let dashItem = null;
+
 let jitterAmt = 0;        // 0..1 from the slider
 let jitterAngles = new Array(N).fill(0).map(() => (Math.random()*2 - 1)); // per-bolt direction [-1,1]
+let endJitterDeg = new Array(N).fill(0); // per-bolt end-state rotation jitter
 
 const jitterEl = document.getElementById('jitter');
 const jitterValEl = document.getElementById('jitterVal');
@@ -102,12 +114,16 @@ function importSymbol(url){
 Promise.all(BOLT_FILES.map(importSymbol))
     .then(defs => {
     symbols.push(...defs);
-    bolts = symbols.map(def => {
+    bolts = symbols.map((def, idx) => {
         const it = def.place([W*0.5, H*0.5]);
         it.applyMatrix = true;
         it.scaling = SCALE;
+        it.data = it.data || {};
+        it.data.file = BOLT_FILES[idx];
+        it.data.key  = keyFromPath(BOLT_FILES[idx]);
         return it;
     });
+    dashItem = bolts.find(b => b && b.data && b.data.key === '-') || null;
     setTargets(poseLine());
     ready = true;
     })
@@ -185,6 +201,59 @@ let isAnimating = false;
 let pendingPoseId = null; // last requested pose while animating
 let poseTween = null;     // gsap tween handle for interp
 
+// --- Recording sizing (4k) ---
+let isRecording = false;
+let origCanvasW = canvas.width;
+let origCanvasH = canvas.height;
+let origZoom    = view.zoom;
+let origCenter  = view.center.clone();
+let origViewSize = view.viewSize.clone();
+
+function setCanvasPixelSize(w, h){
+    canvas.width = w;
+    canvas.height = h;
+    view.viewSize = new paper.Size(w, h);
+}
+
+function applyRecordSizing(targetW = 4096, targetH = 4096){
+    if (isRecording) return;
+    // remember original
+    origCanvasW = canvas.width;
+    origCanvasH = canvas.height;
+    origZoom    = view.zoom;
+    origCenter  = view.center.clone();
+    origViewSize= view.viewSize.clone();
+
+    // Compute CSS (display) size and upscale backing store keeping aspect ratio
+    const rect = canvas.getBoundingClientRect();
+    const cssW = Math.max(1, Math.round(rect.width));
+    const cssH = Math.max(1, Math.round(rect.height));
+    const targetMax = Math.max(targetW, targetH); // e.g. 4096
+    const scale = Math.max(1, targetMax / Math.max(cssW, cssH));
+    const newW = Math.round(cssW * scale);
+    const newH = Math.round(cssH * scale);
+
+    // Increase drawing buffer without changing world coordinates
+    setCanvasPixelSize(newW, newH);
+    view.viewSize = new paper.Size(cssW, cssH);
+    view.zoom = origZoom;
+    view.center = origCenter;
+    view.update();
+    isRecording = true;
+}
+
+function restoreInteractiveSizing(){
+    if (!isRecording) return;
+    // restore view state first
+    view.zoom = origZoom;
+    view.center = origCenter;
+    view.viewSize = origViewSize;
+    // restore canvas size
+    setCanvasPixelSize(origCanvasW, origCanvasH);
+    view.update();
+    isRecording = false;
+}
+
 function consumeLineQueueIfNeeded(){
     if (currentPoseId !== 1) return false;
     const pending = linePendingSteps;
@@ -251,6 +320,8 @@ function setTargets(targets, dur = 0.8){
     if (!bolts.length) return;
     fromPose = bolts.map((it, i) => ({ pos: it.position.clone(), rot: lastBaseRot[i] || 0 }));
     toPose   = targets;
+    // Generate fresh end-state jitter for this pose
+    endJitterDeg = endJitterDeg.map(() => (Math.random() * 2 - 1) * END_JITTER_MAX_DEG); // uniform in [-7, +7]
     interp.t = 0;
     if (poseTween) poseTween.kill();
     isAnimating = true;
@@ -269,8 +340,9 @@ function setTargets(targets, dur = 0.8){
 function applyVisibilityForPose(poseId){
     if (!bolts.length) return;
     for (let i = 0; i < bolts.length; i++) bolts[i].visible = true;
-    if (poseId === 6 && bolts[DASH_INDEX]) {
-    bolts[DASH_INDEX].visible = false;
+    if (poseId === 6) {
+        const d = dashItem || bolts[DASH_INDEX];
+        if (d) d.visible = false;
     }
 }
 
@@ -344,12 +416,13 @@ function applyPose() {
         }
         bolts[i].rotation = rotFinal + addDeg;
 
-        // --- hard snap to final pose at the very end (keep jitter) ---
+        // --- hard snap to final pose at the very end (keep small end jitter) ---
         if (interp.t >= 1) {
             bolts[i].position = b.pos.clone();
-            // settle perfectly aligned at the very end (no jitter)
-            bolts[i].rotation = b.rot;
-            lastBaseRot[i] = b.rot;
+            // keep a tiny random misalignment at rest
+            const ej = endJitterDeg[i] || 0;
+            bolts[i].rotation = b.rot + ej;
+            lastBaseRot[i] = b.rot + ej;
         }
     }
 }
@@ -453,15 +526,16 @@ function applyPose() {
         const targetsShort = distributeOnPaths([p], count, 'upright');
         p.remove();
 
-        // Map back to full list while skipping dash index
+        // Map back to full list while skipping the dash dynamically
+        const dashIdxDyn = bolts.findIndex(b => b && b.data && b.data.key === '-');
         const targets = new Array(N);
         let k = 0;
         for (let i = 0; i < N; i++) {
-            if (i === DASH_INDEX) continue; // skip dash
+            if (i === dashIdxDyn) continue; // skip dash
             targets[i] = targetsShort[k++];
         }
-        if (DASH_INDEX >= 0 && DASH_INDEX < N) {
-            targets[DASH_INDEX] = { pos: new Point(centerX, centerY), rot: 0 };
+        if (dashIdxDyn >= 0 && dashIdxDyn < N) {
+            targets[dashIdxDyn] = { pos: new Point(centerX, centerY), rot: 0 };
         }
         return targets;
     }
@@ -590,6 +664,91 @@ function applyPose() {
             });
         });
     })();
+
+    // Recording: switch main canvas drawing buffer up and back down
+    window.addEventListener('recorder:start', (e) => {
+        const d = (e && e.detail) || {};
+        const tw = Number(d && d.targetW) || 4096;
+        const th = Number(d && d.targetH) || 4096;
+        applyRecordSizing(tw, th);
+    });
+    window.addEventListener('recorder:stop', () => {
+        restoreInteractiveSizing();
+    });
+
+    // --- Arrange button: enforce left-to-right letter order for current pose ---
+    function targetsForPose(id){
+        switch (id) {
+            case 1: return poseLine();
+            case 2: return poseOffsetLine();
+            case 3: return poseArcUp();
+            case 4: return poseArcDown();
+            case 5: return poseCircle();
+            case 6: return poseArrowRight();
+            case 7: return poseCross();
+            case 8: return poseX();
+        }
+        return null;
+    }
+
+    function rearrangeBoltsLeftToRight(){
+        if (!ready || !bolts || bolts.length !== N) return;
+
+        // Compute current targets and left→right slot order
+        const tgs = targetsForPose(currentPoseId);
+        if (!tgs) return;
+        const slotOrderL2R = Array.from({length: N}, (_, i) => i)
+            .sort((i, j) => (tgs[i].pos.x - tgs[j].pos.x));
+
+        // Desired letter order from filenames
+        const desiredKeys = BOLT_FILES.map(keyFromPath);
+        const indicesByKey = new Map();
+        for (let i = 0; i < bolts.length; i++){
+            const key = (bolts[i].data && bolts[i].data.key) || '';
+            if (!indicesByKey.has(key)) indicesByKey.set(key, []);
+            indicesByKey.get(key).push(i);
+        }
+        const taken = new Set();
+        const boltIdxByKeyOrder = [];
+        for (const key of desiredKeys){
+            const list = indicesByKey.get(key) || [];
+            const idx = list.find(j => !taken.has(j));
+            if (typeof idx === 'number') { taken.add(idx); boltIdxByKeyOrder.push(idx); }
+        }
+        for (let i = 0; i < bolts.length; i++) if (!taken.has(i)) boltIdxByKeyOrder.push(i);
+        if (boltIdxByKeyOrder.length !== N) return;
+
+        // Map each left→right slot to the corresponding letter bolt
+        const newOrder = new Array(N);
+        for (let i = 0; i < N; i++){
+            const slotIdx = slotOrderL2R[i];
+            newOrder[slotIdx] = boltIdxByKeyOrder[i];
+        }
+
+        // Reorder bolts and per-bolt state arrays
+        const reorderedBolts = newOrder.map(i => bolts[i]);
+        const reorderedJitterAngles = newOrder.map(i => jitterAngles[i]);
+        const reorderedLastBaseRot  = newOrder.map(i => lastBaseRot[i]);
+        const reorderedEndJitter    = newOrder.map(i => endJitterDeg[i]);
+
+        bolts = reorderedBolts;
+        jitterAngles = reorderedJitterAngles;
+        lastBaseRot = reorderedLastBaseRot;
+        endJitterDeg = reorderedEndJitter;
+
+        // Refresh dash reference and re-apply visibility if needed
+        dashItem = bolts.find(b => b && b.data && b.data.key === '-') || null;
+
+        setTargets(tgs, 0.5);
+        applyVisibilityForPose(currentPoseId);
+    }
+
+    const arrangeBtn = document.getElementById('arrange-ltr');
+    if (arrangeBtn){
+        arrangeBtn.addEventListener('click', () => {
+            rearrangeBoltsLeftToRight();
+        });
+    }
 
     // ----------------- Animate loop -----------------
     view.onFrame = function(){
