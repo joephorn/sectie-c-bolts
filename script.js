@@ -68,12 +68,12 @@ const BACKLASH_GAIN = 1;
 // Position stepping
 const ENABLE_STEPPED_TIME = true;
 const STEP_COUNT          = 4;
-const STEP_JITTER         = 0.5;
+const STEP_JITTER         = 0.6;
 
 // Rotation stepping (independent from position)
 const ENABLE_STEPPED_ROT  = true;
-const ROT_STEP_COUNT      = 3;
-const ROT_STEP_JITTER     = 1;
+const ROT_STEP_COUNT      = 2;
+const ROT_STEP_JITTER     = 0.5;
 
 const _dashIdx = BOLT_FILES.findIndex(p => p.includes('/-.svg'));
 const DASH_INDEX = _dashIdx >= 0 ? _dashIdx : 6; // hardcoded fallback
@@ -111,6 +111,13 @@ if (jitterEl){
     upd();
 }
 // Occasional jitter/rotate toggle (per-bolt pulses)
+// Stepped shaping for pulses (to avoid smooth sine)
+const OCC_STEPPED       = true;
+const OCC_STEP_COUNT    = 4;   // number of levels within a pulse
+
+// Stepped C-inverted spin (space): quantize rotation into discrete ticks
+const SPIN_STEPPED      = true;
+const SPIN_STEP_COUNT   = 8;   // number of ticks over 360°
 let OCC_JIT_ENABLE = false;
 const OCC_INT_MIN_MS = 500;
 const OCC_INT_MAX_MS = 5000;
@@ -553,7 +560,10 @@ function applyPose() {
         let occAdd = 0;
         if (OCC_JIT_ENABLE && occActive[i]){
             const tp = Math.min(1, (now - occStart[i]) / Math.max(1, occDur[i]));
-            const s = Math.sin(Math.PI * tp);
+            let s = Math.sin(Math.PI * tp);
+            if (OCC_STEPPED && OCC_STEP_COUNT > 1) {
+                s = Math.floor(s * OCC_STEP_COUNT + 1e-6) / OCC_STEP_COUNT;
+            }
             occAdd = (occAmpDeg[i]||0) * s;
         }
         const spinAdd = (typeof spinOffsetDeg !== 'undefined' && spinOffsetDeg[i]) ? spinOffsetDeg[i] : 0;
@@ -564,7 +574,12 @@ function applyPose() {
             bolts[i].position = b.pos.clone();
             // keep a tiny random misalignment at rest
             const ej = endJitterDeg[i] || 0;
-            const occAddEnd = (OCC_JIT_ENABLE && occActive[i]) ? (occAmpDeg[i]||0) * Math.sin(Math.PI * Math.min(1, (now - occStart[i]) / Math.max(1, occDur[i]))) : 0;
+            const tpEnd = Math.min(1, (now - occStart[i]) / Math.max(1, occDur[i]));
+            let sEnd = Math.sin(Math.PI * tpEnd);
+            if (OCC_STEPPED && OCC_STEP_COUNT > 1) {
+                sEnd = Math.floor(sEnd * OCC_STEP_COUNT + 1e-6) / OCC_STEP_COUNT;
+            }
+            const occAddEnd = (OCC_JIT_ENABLE && occActive[i]) ? (occAmpDeg[i]||0) * sEnd : 0;
             const spinAddEnd = (typeof spinOffsetDeg !== 'undefined' && spinOffsetDeg[i]) ? spinOffsetDeg[i] : 0;
             bolts[i].rotation = b.rot + ej + occAddEnd + spinAddEnd;
             lastBaseRot[i] = b.rot + ej; // do not persist occ jitter
@@ -847,7 +862,7 @@ function applyPose() {
         } catch(_){ }
     }
 
-    // Spin helper: rotate the 'C' bolt 360° with easing
+    // Spin helper: rotate the 'C' bolt 360° with easing (stepped if enabled)
     function spinCOnce(){
         if (!bolts || !bolts.length) return;
         const idx = bolts.findIndex(b => b && b.data && b.data.key === 'C-inverted');
@@ -859,7 +874,14 @@ function applyPose() {
             v: 360,
             duration: dur,
             ease: 'power2.inOut',
-            onUpdate: () => { spinOffsetDeg[idx] = state.v; },
+            onUpdate: () => {
+                let v = state.v;
+                if (SPIN_STEPPED && SPIN_STEP_COUNT > 1) {
+                    const stepAngle = 360 / SPIN_STEP_COUNT;
+                    v = Math.floor(v / stepAngle + 1e-6) * stepAngle;
+                }
+                spinOffsetDeg[idx] = v;
+            },
             onComplete: () => { spinOffsetDeg[idx] = 0; spinTweens[idx] = null; }
         });
     }
