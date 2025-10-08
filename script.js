@@ -24,6 +24,14 @@ let SCALE = 0.75; // made dynamic to allow runtime scaling
 const BASE_SPACING = 110;
 let SPACING = BASE_SPACING * SCALE; // recomputed when SCALE changes
 const JITTER_MAX_DEG = 50;
+// Global render/update frame rate (canvas + GSAP)
+let TARGET_FPS = 30; // target render/update frame rate
+function setTargetFps(fps){
+    TARGET_FPS = Math.max(5, Math.min(60, Math.floor(fps || 30)));
+    try { if (window.gsap && gsap.ticker && typeof gsap.ticker.fps === 'function') gsap.ticker.fps(TARGET_FPS); } catch(_){ }
+}
+// Initialize GSAP ticker fps once
+try { if (window.gsap && gsap.ticker && typeof gsap.ticker.fps === 'function') gsap.ticker.fps(TARGET_FPS); } catch(_){ }
 const END_JITTER_MAX_DEG = 10;
 
 // Mid-animation rotation (driven by jitter slider): ramp in, then click off
@@ -85,6 +93,7 @@ let endJitterDeg = new Array(N).fill(0); // per-bolt end-state rotation jitter
 
 const jitterEl = document.getElementById('jitter');
 const jitterValEl = document.getElementById('jitterVal');
+const occJitEl = document.getElementById('occ-jit');
 if (jitterEl){
     const upd = () => {
         jitterAmt = Number(jitterEl.value) / 100; // 0..1
@@ -92,6 +101,28 @@ if (jitterEl){
     };
     jitterEl.addEventListener('input', upd);
     upd();
+}
+// Occasional jitter/rotate toggle (per-bolt pulses)
+let OCC_JIT_ENABLE = false;
+const OCC_INT_MIN_MS = 500;
+const OCC_INT_MAX_MS = 5000;
+let occActive = [];
+let occStart  = [];
+let occDur    = [];
+let occDue    = [];
+let occAmpDeg = [];
+if (occJitEl){
+    occJitEl.addEventListener('change', () => {
+        OCC_JIT_ENABLE = !!occJitEl.checked;
+        if (!OCC_JIT_ENABLE) {
+            for (let i=0;i<N;i++){ occActive[i]=false; occAmpDeg[i]=0; }
+        } else {
+            const now = Date.now();
+            for (let i=0;i<N;i++){
+                occActive[i]=false; occAmpDeg[i]=0; occStart[i]=0; occDur[i]=0; occDue[i]= now + OCC_INT_MIN_MS + Math.random()*(OCC_INT_MAX_MS-OCC_INT_MIN_MS);
+            }
+        }
+    });
 }
 
 function importSymbol(url){
@@ -124,6 +155,14 @@ Promise.all(BOLT_FILES.map(importSymbol))
         return it;
     });
     dashItem = bolts.find(b => b && b.data && b.data.key === '-') || null;
+    // init per-bolt occasional jitter state
+    occActive = new Array(N).fill(false);
+    occStart  = new Array(N).fill(0);
+    occDur    = new Array(N).fill(0);
+    occDue    = new Array(N).fill(0);
+    occAmpDeg = new Array(N).fill(0);
+    const nowInit = Date.now();
+    for (let i=0;i<N;i++) occDue[i] = nowInit + Math.random()*(OCC_INT_MAX_MS-OCC_INT_MIN_MS) + OCC_INT_MIN_MS;
     setTargets(poseLine());
     ready = true;
     })
@@ -135,7 +174,7 @@ function makeLinePath(x1, y1, x2, y2){
 }
 function makeArcPath(cx, cy, r, startDeg, endDeg){
     const p = new Path({ strokeColor:null });
-    const steps = 40;
+    const steps = 20;
     for (let i=0;i<=steps;i++){
     const t = i/steps;
     const a = (startDeg + (endDeg - startDeg)*t) * Math.PI/180;
@@ -343,6 +382,8 @@ function setTargets(targets, dur = 0.8){
 
 // Allow changing SCALE at runtime and reflow current pose
 let _savedScaleForRecord = null;
+// Global path order flag: when true, pose targets are returned reversed
+let PATH_ORDER_REVERSED = false;
 function setScaleValue(newScale){
     if (typeof newScale !== 'number' || !isFinite(newScale) || newScale <= 0) return;
     SCALE = newScale;
@@ -376,6 +417,26 @@ function applyVisibilityForPose(poseId){
 
 function applyPose() {
     const tGlobal = interp.t;
+    // Occasionally add a tiny rotation pulse per letter (staggered)
+    const now = Date.now();
+    if (OCC_JIT_ENABLE && !isAnimating) {
+        for (let i=0;i<N;i++){
+            if (!occActive[i] && now >= (occDue[i]||0)){
+                occActive[i] = true;
+                occStart[i]  = now;
+                occDur[i]    = 250 + Math.random()*350;
+                occAmpDeg[i] = (Math.random()*40 - 20);
+            }
+            if (occActive[i]){
+                const t = Math.min(1, (now - occStart[i]) / Math.max(1, occDur[i]));
+                if (t >= 1){
+                    occActive[i] = false;
+                    occAmpDeg[i] = 0;
+                    occDue[i] = now + OCC_INT_MIN_MS + Math.random()*(OCC_INT_MAX_MS - OCC_INT_MIN_MS);
+                }
+            }
+        }
+    }
     for (let i = 0; i < bolts.length; i++){
         const a = fromPose[i] || { pos: new Point(W*0.5,H*0.5), rot: 0 };
         const b = toPose[i]   || a;
@@ -442,15 +503,23 @@ function applyPose() {
                 addDeg = 0; // "klik" terug naar basis
             }
         }
-        bolts[i].rotation = rotFinal + addDeg;
+        // Occasional rotation pulse (sinusoidal in/out)
+        let occAdd = 0;
+        if (OCC_JIT_ENABLE && occActive[i]){
+            const tp = Math.min(1, (now - occStart[i]) / Math.max(1, occDur[i]));
+            const s = Math.sin(Math.PI * tp);
+            occAdd = (occAmpDeg[i]||0) * s;
+        }
+        bolts[i].rotation = rotFinal + addDeg + occAdd;
 
         // --- hard snap to final pose at the very end (keep small end jitter) ---
         if (interp.t >= 1) {
             bolts[i].position = b.pos.clone();
             // keep a tiny random misalignment at rest
             const ej = endJitterDeg[i] || 0;
-            bolts[i].rotation = b.rot + ej;
-            lastBaseRot[i] = b.rot + ej;
+            const occAddEnd = (OCC_JIT_ENABLE && occActive[i]) ? (occAmpDeg[i]||0) * Math.sin(Math.PI * Math.min(1, (now - occStart[i]) / Math.max(1, occDur[i]))) : 0;
+            bolts[i].rotation = b.rot + ej + occAddEnd;
+            lastBaseRot[i] = b.rot + ej; // do not persist occ jitter
         }
     }
 }
@@ -467,7 +536,7 @@ function applyPose() {
         const p = makeLinePath(x1, y1, x2, y2);
         const targets = distributeOnSinglePathWithSpacing(p, N, SPACING, 'upright');
         p.remove();
-        return targets;
+        return maybeReverseTargets(targets);
     }
     function poseOffsetLine(){
         const totalLength = SPACING * (N - 1);
@@ -480,7 +549,7 @@ function applyPose() {
             const pos = new Point(centerX + x, centerY + y);
             targets.push({ pos, rot: 0 }); // keep upright; jitter handles slight variation
         }
-        return targets;
+        return maybeReverseTargets(targets);
     }
     function poseArcUp(){
         const baseR = Math.min(W, H) * 0.28 * SCALE;
@@ -490,7 +559,7 @@ function applyPose() {
         const endAngle = -20;
 
         const p = new Path({ strokeColor: null });
-        const steps = 40;
+        const steps = 20;
         for (let i = 0; i <= steps; i++) {
             const t = i / steps;
             const a = (startAngle + (endAngle - startAngle) * t) * Math.PI / 180;
@@ -500,7 +569,7 @@ function applyPose() {
 
         const targets = distributeOnPaths([p], N, 'upright');
         p.remove();
-        return targets;
+        return maybeReverseTargets(targets);
     }
     function poseArcDown(){
         const baseR = Math.min(W, H) * 0.28 * SCALE;
@@ -520,7 +589,7 @@ function applyPose() {
 
         const targets = distributeOnPaths([p], N, 'upright');
         p.remove();
-        return targets;
+        return maybeReverseTargets(targets);
     }
     function poseCircle(){
         const r = Math.min(W,H) * 0.25 * SCALE;
@@ -530,7 +599,7 @@ function applyPose() {
         const p = makeArcPath(0, 0, r, startAngle, endAngle);
         const targets = distributeOnPaths([p], N, 'upright');
         p.remove();
-        return targets;
+        return maybeReverseTargets(targets);
     }
     function poseArrowRight(){
         const halfH = Math.min(W, H) * 0.33 * SCALE; // vertical half-height
@@ -553,7 +622,7 @@ function applyPose() {
         const p = makePolylineSharp(pts);
         const targets = distributeOnPaths([p], N, 'upright'); // include '-'
         p.remove();
-        return targets;
+        return maybeReverseTargets(targets);
     }
     
     function poseCross(){
@@ -572,7 +641,7 @@ function applyPose() {
             pos: off.add(new Point(cx, cy)),
             rot: 0
         }));
-        return targets;
+        return maybeReverseTargets(targets);
     }
     
     function poseX(){
@@ -595,17 +664,13 @@ function applyPose() {
             pos: off.add(new Point(cx, cy)),
             rot: 0
         }));
-        return targets;
+        return maybeReverseTargets(targets);
     }
 
-    // ----------------- Begin / Only C-inverted -----------------
     function poseBeginStacked(){
         const targets = new Array(N).fill(0).map(() => ({ pos: new Point(centerX, centerY), rot: 0 }));
-        return targets;
+        return maybeReverseTargets(targets);
     }
-
-    // Pose 0 animates like other poses. Visibility is handled so that
-    // everything remains visible during the tween, then only C‑inverted stays.
 
     // ----------------- Keyboard -----------------
     function switchPose(id){
@@ -639,7 +704,12 @@ function applyPose() {
             if (n === 0) { switchPose(0); return; }
             if (n>=1 && n<=9) { switchPose(n); return; }
         }
-        if (e.key === 'r' || e.key === 'R') { rearrangeBoltsLeftToRight(true); return; }
+        // Toggle reverse along the path with 'R'
+        if (e.key === 'r' || e.key === 'R') {
+            if (_isScrambling) return;
+            rearrangeBoltsLeftToRight(!PATH_ORDER_REVERSED);
+            return;
+        }
         if (e.key === '[') { POSE_DUR = Math.max(0.1, +(POSE_DUR - 0.1).toFixed(2)); }
         if (e.key === ']') { POSE_DUR = Math.min(3.0, +(POSE_DUR + 0.1).toFixed(2)); }
         if (e.key === 'e') {
@@ -717,7 +787,7 @@ function applyPose() {
     });
 
     // --- Arrange button: enforce left-to-right letter order for current pose ---
-    function targetsForPose(id){
+function targetsForPose(id){
         switch (id) {
             case 0: return poseBeginStacked();
             case 1: return poseLine();
@@ -730,7 +800,12 @@ function applyPose() {
             case 8: return poseX();
         }
         return null;
-    }
+}
+
+function maybeReverseTargets(tgs){
+    if (!Array.isArray(tgs)) return tgs;
+    return PATH_ORDER_REVERSED ? tgs.slice().reverse() : tgs;
+}
 
     // Raw path slots (original generator order) for the current pose
     function getRawSlotsForPose(id){
@@ -864,7 +939,7 @@ function applyPose() {
     let _scrambleQueue = [];
     let _isScrambling = false;
     let _scrambleByTimer = false;
-    const SCRAMBLE_TICK_MS = 120;
+    const SCRAMBLE_TICK_MS = 80;
 
     function getPathSlots(reverse){
         const raw = getRawSlotsForPose(currentPoseId);
@@ -902,32 +977,66 @@ function applyPose() {
         return idx.map(i => slots[i]);
     }
 
+    // Persist final mapping by reordering arrays so future tweens stay consistent
+    function persistFinalOrderFromSlots(slots){
+        if (!slots) return;
+        const keys = BOLT_FILES.map(keyFromPath);
+        const indicesByKey = new Map();
+        for (let i = 0; i < bolts.length; i++){
+            const key = (bolts[i].data && bolts[i].data.key) || '';
+            if (!indicesByKey.has(key)) indicesByKey.set(key, []);
+            indicesByKey.get(key).push(i);
+        }
+        const nextByKey = new Map();
+        const ord = new Array(N);
+        for (let s = 0; s < N; s++){
+            const key = keys[s] || '';
+            const list = indicesByKey.get(key) || [];
+            const ptr = nextByKey.get(key) || 0;
+            const boltIdx = list[Math.min(ptr, Math.max(0, list.length - 1))];
+            nextByKey.set(key, ptr + 1);
+            ord[s] = (typeof boltIdx === 'number') ? boltIdx : s;
+        }
+        const reorderedBolts = ord.map(i => bolts[i]);
+        const reorderedJitterAngles = ord.map(i => jitterAngles[i]);
+        const reorderedLastBaseRot  = ord.map(i => lastBaseRot[i]);
+        const reorderedEndJitter    = ord.map(i => endJitterDeg[i]);
+        bolts = reorderedBolts;
+        jitterAngles = reorderedJitterAngles;
+        lastBaseRot = reorderedLastBaseRot;
+        endJitterDeg = reorderedEndJitter;
+        dashItem = bolts.find(b => b && b.data && b.data.key === '-') || null;
+    }
+
     function runNextScramble(){
         if (!_scrambleQueue.length){
+            persistFinalOrderFromSlots(_scrambleFinalSlots);
+            _scrambleFinalSlots = null;
             _isScrambling = false;
             applyVisibilityForPose(currentPoseId);
             return;
         }
         const targets = _scrambleQueue.shift();
-        // Teleport: no tween, snap instantly
-        setTargets(targets, 0);
-        // Schedule next step after a short delay so flicker is visible
+        setTargets(targets, 0); // Teleport
         if (_scrambleQueue.length) {
             setTimeout(runNextScramble, SCRAMBLE_TICK_MS);
         } else {
-            _isScrambling = false;
-            applyVisibilityForPose(currentPoseId);
+            setTimeout(runNextScramble, 0); // finalize on next tick
         }
     }
 
     function rearrangeBoltsLeftToRight(reverse = false){
         if (!ready || !bolts || bolts.length !== N) return;
+        if (_isScrambling) return;
+        // Persist global path order preference so future poses use same order
+        PATH_ORDER_REVERSED = !!reverse;
         const slots = getPathSlots(reverse);
         if (!slots) return;
         // Build a scramble sequence of target arrays
         _scrambleQueue = [];
-        const flickers = 3; // number of random steps
+        const flickers = 5;
         for (let i=0;i<flickers;i++) _scrambleQueue.push(buildRandomTargetsFromSlots(slots));
+        _scrambleFinalSlots = slots;
         _scrambleQueue.push(buildFinalTargetsFromSlots(slots));
         _isScrambling = true;
         _scrambleByTimer = true;
@@ -936,15 +1045,20 @@ function applyPose() {
 
     const arrangeBtn = document.getElementById('arrange-ltr');
     if (arrangeBtn){
-        arrangeBtn.addEventListener('click', (e) => {
-            const reverse = !!(e && (e.shiftKey || e.altKey));
-            rearrangeBoltsLeftToRight(reverse);
+        arrangeBtn.addEventListener('click', () => {
+            if (_isScrambling) return;
+            rearrangeBoltsLeftToRight(!PATH_ORDER_REVERSED);
         });
     }
 
-    // ----------------- Animate loop -----------------
+    // ----------------- Animate loop (throttled by TARGET_FPS) -----------------
+    let _lastFrameStamp = 0;
     view.onFrame = function(){
         if (!ready) return;
+        const now = (window.performance && performance.now) ? performance.now() : Date.now();
+        const budget = 1000 / Math.max(1, TARGET_FPS);
+        if (now - _lastFrameStamp < budget) return;
+        _lastFrameStamp = now;
         applyPose();
     };
 })();
