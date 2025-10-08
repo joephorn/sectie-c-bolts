@@ -5,10 +5,12 @@
     <title>Sectie-C Bolts</title>
     <style>
       :root{ --bar-h: 64px; }
-      html,body{margin:0;height:100%;background:#fff;}
+      html,body{margin:0;height:100%;background:#fff;overflow: hidden;}
       body{display:flex;flex-direction:column;height:100vh;}
       #shortcuts{height:var(--bar-h);box-sizing:border-box;padding:10px 14px;display:flex;gap:16px;align-items:center;border-bottom:1px solid #e6e6e6;font:14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;}
-      #shortcuts .kbd{font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background:#f3f3f3; border:1px solid #ddd; border-bottom-color:#ccc; padding:2px 6px; border-radius:6px; box-shadow:inset 0 -1px 0 rgba(0,0,0,.06);} 
+      .kbd{font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background:#f3f3f3; border:1px solid #ddd; border-bottom-color:#ccc; padding:2px 6px; border-radius:6px; box-shadow:inset 0 -1px 0 rgba(0,0,0,.06);}
+      .kbd.active{ background:#16a34a; color:#fff; border-color:#0e7a36; }
+      .kbd[disabled]{ opacity:.5; cursor:not-allowed; }
       #shortcuts .item{display:flex;align-items:center;gap:8px;white-space:nowrap;}
       #c{flex:1 1 auto; width:100%; height:calc(100vh - var(--bar-h)); display:block;}
     </style>
@@ -28,26 +30,15 @@
         <div class="item"><span class="kbd" data-key="8">8</span>x</div>
         <div class="item"><span class="kbd" data-key="0">0</span>Begin</div>
         <div class="item"><span class="kbd" id="arrange-ltr" title="Arrange SECTIE‑C along path (Shift/Alt: reverse)" data-key="r">R</span>Reverse path</div>
-
-        <div class="item" style="margin-left:auto">
-            Jitter
-            <input id="jitter" type="range" min="0" max="100" value="100" step="1">
-            <span id="jitterVal" class="kbd">100%</span>
-        </div>
-        <div class="item">
-            <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-                <input id="occ-jit" type="checkbox">
-                Jitter pulses
-            </label>
-        </div>
+        <div class="item"><span class="kbd" data-key="left-mouse">Lmouse</span>Random rotation</div>
+        <div class="item"><span class="kbd" data-key="space">Space</span>Rotate C</div>
     </div>
     <canvas id="c"></canvas>
 
-    <div id="recorder-ui" style="position:fixed; left:30px; top:80px; z-index:9999; display:flex; gap:8px; font-family:system-ui;">
-      <button id="rec-start-webm">Start WebM</button>
-      <button id="rec-start-mp4">Start MP4</button>
-      <button id="rec-stop" disabled>Stop & download</button>
-      <span id="rec-status" style="margin-left:6px; opacity:.75;"></span>
+    <div id="recorder-ui shortcuts" style="position:fixed; left:30px; top:80px; z-index:9999; display:flex; gap:8px;">
+      <button class="kbd" id="rec-start-webm">Start WebM</button>
+      <button class="kbd" id="rec-start-mp4">Start MP4</button>
+      <button class="kbd" id="rec-stop" disabled>Stop & download</button>
     </div>
 
     <script>
@@ -59,7 +50,6 @@
         const btnStartWebM = document.getElementById('rec-start-webm');
         const btnStartMP4  = document.getElementById('rec-start-mp4');
         const btnStop  = document.getElementById('rec-stop');
-        const statusEl = document.getElementById('rec-status');
 
         // Settings
         const FPS = 30;
@@ -94,10 +84,7 @@
         function startRecording(preferredList, ext){
             try {
                 const type = pickMimeType(preferredList);
-                if (!type) {
-                    statusEl.textContent = (ext === 'mp4') ? 'MP4 opname niet ondersteund in deze browser.' : 'Recording niet ondersteund.';
-                    return;
-                }
+                if (!type) { console.warn(ext === 'mp4' ? 'MP4 opname niet ondersteund.' : 'Recording niet ondersteund.'); return; }
                 // schaal main canvas-buffers voor opname (max ~4k)
                 window.dispatchEvent(new CustomEvent('recorder:start', { detail: { targetW: 4096, targetH: 4096, contentScale: 1 } }));
                 // stream exact op canvas-resolutie (afhankelijk van jouw canvas.width/height)
@@ -116,14 +103,24 @@
                     if (btnStartWebM) btnStartWebM.disabled = true;
                     if (btnStartMP4)  btnStartMP4.disabled  = true;
                     btnStop.disabled = false;
-                    statusEl.textContent = `Recording (${ext.toUpperCase()})…`;
+                    // highlight active start button
+                    try {
+                      if (btnStartWebM) btnStartWebM.classList.remove('active');
+                      if (btnStartMP4)  btnStartMP4.classList.remove('active');
+                      if (ext === 'webm' && btnStartWebM) btnStartWebM.classList.add('active');
+                      if (ext === 'mp4'  && btnStartMP4)  btnStartMP4.classList.add('active');
+                    } catch(_){}
                 };
 
                 mediaRecorder.onstop = () => {
                     if (btnStartWebM) btnStartWebM.disabled = false;
                     if (btnStartMP4)  btnStartMP4.disabled  = false;
                     btnStop.disabled = true;
-                    statusEl.textContent = '';
+                    // clear active highlight
+                    try {
+                      if (btnStartWebM) btnStartWebM.classList.remove('active');
+                      if (btnStartMP4)  btnStartMP4.classList.remove('active');
+                    } catch(_){}
                     // herstel canvas buffers
                     window.dispatchEvent(new CustomEvent('recorder:stop'));
                     // bouw blob en download
@@ -148,7 +145,6 @@
                 mediaRecorder.start(250); // timeslice voor vloeiendere write
             } catch (err) {
                 console.error('Recorder start error:', err);
-                statusEl.textContent = 'Recording niet gestart.';
             }
         }
 

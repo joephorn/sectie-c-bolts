@@ -2,8 +2,8 @@
 // ----------------- Setup Paper -----------------
 const canvas = document.getElementById('c');
 if (!canvas) { console.error('Canvas #c not found'); return; }
-canvas.width = window.innerWidth; //moet 4k worden bij record
-canvas.height = window.innerHeight;  //moet 4k worden bij record
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
 paper.setup(canvas);
 const { Path, Point, view, project, SymbolDefinition, Tool } = paper;
 const tool = new Tool();
@@ -20,12 +20,11 @@ const W = view.bounds.width;
 const H = view.bounds.height;
 const centerX = W/2;
 const centerY = H/2;
-let SCALE = 0.75; // made dynamic to allow runtime scaling
+let SCALE = 0.75;
 const BASE_SPACING = 110;
-let SPACING = BASE_SPACING * SCALE; // recomputed when SCALE changes
+let SPACING = BASE_SPACING * SCALE;
 const JITTER_MAX_DEG = 50;
-// Position jitter (px) added during tweens to break straight-line feel
-const POS_JITTER_MAX_PX = 18; // scaled by SCALE and jitter slider
+const POS_JITTER_MAX_PX = 10; // scaled by SCALE and jitter slider
 // Global render/update frame rate (canvas + GSAP)
 let TARGET_FPS = 30; // target render/update frame rate
 function setTargetFps(fps){
@@ -89,12 +88,16 @@ function keyFromPath(p){
 // Track a direct reference to the dash item regardless of array index
 let dashItem = null;
 
-let jitterAmt = 0;        // 0..1 from the slider
+// Base jitter amount when no slider is present (0..1)
+let jitterAmt = 1;
 let jitterAngles = new Array(N).fill(0).map(() => (Math.random()*2 - 1)); // per-bolt direction [-1,1]
 let endJitterDeg = new Array(N).fill(0); // per-bolt end-state rotation jitter
 // Per-bolt waveform for position jitter
 let posJitPhase = new Array(N).fill(0).map(() => Math.random() * Math.PI * 2);
 let posJitSpeed = new Array(N).fill(0).map(() => 0.6 + Math.random() * 1.1); // cycles/sec
+// Per-bolt additive spin offsets (deg) for ad-hoc spins (e.g., space key)
+let spinOffsetDeg = new Array(N).fill(0);
+let spinTweens = new Array(N).fill(null);
 
 const jitterEl = document.getElementById('jitter');
 const jitterValEl = document.getElementById('jitterVal');
@@ -116,18 +119,27 @@ let occStart  = [];
 let occDur    = [];
 let occDue    = [];
 let occAmpDeg = [];
-if (occJitEl){
-    occJitEl.addEventListener('change', () => {
-        OCC_JIT_ENABLE = !!occJitEl.checked;
-        if (!OCC_JIT_ENABLE) {
-            for (let i=0;i<N;i++){ occActive[i]=false; occAmpDeg[i]=0; }
-        } else {
-            const now = Date.now();
-            for (let i=0;i<N;i++){
-                occActive[i]=false; occAmpDeg[i]=0; occStart[i]=0; occDur[i]=0; occDue[i]= now + OCC_INT_MIN_MS + Math.random()*(OCC_INT_MAX_MS-OCC_INT_MIN_MS);
-            }
+function setOccJitterEnabled(on){
+    const val = !!on;
+    OCC_JIT_ENABLE = val;
+    if (occJitEl) occJitEl.checked = val;
+    try {
+        const lmb = document.querySelector('#shortcuts .kbd[data-key="left-mouse"]');
+        if (lmb) {
+            if (val) lmb.classList.add('active'); else lmb.classList.remove('active');
         }
-    });
+    } catch(_){ }
+    if (!val) {
+        for (let i=0;i<N;i++){ occActive[i]=false; occAmpDeg[i]=0; }
+    } else {
+        const now = Date.now();
+        for (let i=0;i<N;i++){
+            occActive[i]=false; occAmpDeg[i]=0; occStart[i]=0; occDur[i]=0; occDue[i]= now + OCC_INT_MIN_MS + Math.random()*(OCC_INT_MAX_MS-OCC_INT_MIN_MS);
+        }
+    }
+}
+if (occJitEl){
+    occJitEl.addEventListener('change', () => setOccJitterEnabled(!!occJitEl.checked));
 }
 
 function importSymbol(url){
@@ -170,6 +182,9 @@ Promise.all(BOLT_FILES.map(importSymbol))
     for (let i=0;i<N;i++) occDue[i] = nowInit + Math.random()*(OCC_INT_MAX_MS-OCC_INT_MIN_MS) + OCC_INT_MIN_MS;
     setTargets(poseLine());
     ready = true;
+    // Sync UI state (left-mouse badge) with current pulses setting
+    try { setOccJitterEnabled(!!OCC_JIT_ENABLE); } catch(_){ }
+    try { syncControlsActiveState(); } catch(_){ }
     })
     .catch(err => console.error('importSVG error:', err));
 
@@ -541,7 +556,8 @@ function applyPose() {
             const s = Math.sin(Math.PI * tp);
             occAdd = (occAmpDeg[i]||0) * s;
         }
-        bolts[i].rotation = rotFinal + addDeg + occAdd;
+        const spinAdd = (typeof spinOffsetDeg !== 'undefined' && spinOffsetDeg[i]) ? spinOffsetDeg[i] : 0;
+        bolts[i].rotation = rotFinal + addDeg + occAdd + spinAdd;
 
         // --- hard snap to final pose at the very end (keep small end jitter) ---
         if (interp.t >= 1) {
@@ -549,7 +565,8 @@ function applyPose() {
             // keep a tiny random misalignment at rest
             const ej = endJitterDeg[i] || 0;
             const occAddEnd = (OCC_JIT_ENABLE && occActive[i]) ? (occAmpDeg[i]||0) * Math.sin(Math.PI * Math.min(1, (now - occStart[i]) / Math.max(1, occDur[i]))) : 0;
-            bolts[i].rotation = b.rot + ej + occAddEnd;
+            const spinAddEnd = (typeof spinOffsetDeg !== 'undefined' && spinOffsetDeg[i]) ? spinOffsetDeg[i] : 0;
+            bolts[i].rotation = b.rot + ej + occAddEnd + spinAddEnd;
             lastBaseRot[i] = b.rot + ej; // do not persist occ jitter
         }
     }
@@ -727,6 +744,8 @@ function applyPose() {
         // For pose 0 keep all visible during animation; applyVisibilityForPose
         // will hide others after tween completes.
         applyVisibilityForPose(id);
+        // Update UI highlighting
+        try { syncControlsActiveState(); } catch(_){ }
     }
 
     tool.onKeyDown = function(e){
@@ -735,10 +754,14 @@ function applyPose() {
             if (n === 0) { switchPose(0); return; }
             if (n>=1 && n<=9) { switchPose(n); return; }
         }
-        // Toggle reverse along the path with 'R'
+        if (e.key === ' ' || e.key === 'space') {
+            spinCOnce();
+            return;
+        }
         if (e.key === 'r' || e.key === 'R') {
             if (_isScrambling) return;
             rearrangeBoltsLeftToRight(!PATH_ORDER_REVERSED);
+            try { syncControlsActiveState(); } catch(_){ }
             return;
         }
         if (e.key === '[') { POSE_DUR = Math.max(0.1, +(POSE_DUR - 0.1).toFixed(2)); }
@@ -781,20 +804,68 @@ function applyPose() {
         }
     }, { passive: false });
 
+    // Toggle jitter pulses on canvas click
+    canvas.addEventListener('click', () => {
+        setOccJitterEnabled(!OCC_JIT_ENABLE);
+    });
+
     (function bindShortcutClicks(){
         const nodes = document.querySelectorAll('#shortcuts .kbd');
         if (!nodes || !nodes.length) return;
         nodes.forEach(el => {
             el.style.cursor = 'pointer';
             el.addEventListener('click', () => {
-                const attr = el.getAttribute('data-key');
+                const attr = (el.getAttribute('data-key') || '').toLowerCase();
+                // Special controls
+                if (attr === 'left-mouse') { setOccJitterEnabled(!OCC_JIT_ENABLE); syncControlsActiveState(); return; }
+                if (attr === 'space') { spinCOnce(); return; }
+                // Numeric poses
                 const key = attr ? parseInt(attr, 10) : parseInt((el.textContent||'').trim(), 10);
-                if (isNaN(key)) return;
-                if (key === 0) { switchPose(0); return; }
-                switchPose(key);
+                if (!isNaN(key)) {
+                    if (key === 0) { switchPose(0); syncControlsActiveState(); return; }
+                    switchPose(key);
+                    syncControlsActiveState();
+                }
             });
         });
     })();
+
+    function syncControlsActiveState(){
+        try {
+            const bar = document.getElementById('shortcuts');
+            if (!bar) return;
+            const all = bar.querySelectorAll('.kbd');
+            all.forEach(el => {
+                // keep left-mouse state driven by pulses toggle
+                if (el.getAttribute('data-key') !== 'left-mouse') el.classList.remove('active');
+            });
+            const poseEl = bar.querySelector(`.kbd[data-key="${currentPoseId}"]`);
+            if (poseEl) poseEl.classList.add('active');
+            const rEl = document.getElementById('arrange-ltr');
+            if (rEl) {
+                if (PATH_ORDER_REVERSED) rEl.classList.add('active'); else rEl.classList.remove('active');
+            }
+        } catch(_){ }
+    }
+
+    // Spin helper: rotate the 'C' bolt 360° with easing
+    function spinCOnce(){
+        if (!bolts || !bolts.length) return;
+        // Spin the inverted C
+        const idx = bolts.findIndex(b => b && b.data && b.data.key === 'C-inverted');
+        if (idx < 0) return;
+        // If an existing spin is running, kill it first
+        try { if (spinTweens[idx]) spinTweens[idx].kill(); } catch(_){}
+        const state = { v: 0 };
+        const dur = 0.8;
+        spinTweens[idx] = gsap.to(state, {
+            v: 360,
+            duration: dur,
+            ease: 'power2.inOut',
+            onUpdate: () => { spinOffsetDeg[idx] = state.v; },
+            onComplete: () => { spinOffsetDeg[idx] = 0; spinTweens[idx] = null; }
+        });
+    }
 
     // Recording: switch main canvas drawing buffer up and back down
     window.addEventListener('recorder:start', (e) => {
@@ -1034,12 +1105,16 @@ function maybeReverseTargets(tgs){
         const reorderedEndJitter    = ord.map(i => endJitterDeg[i]);
         const reorderedPosPhase     = ord.map(i => posJitPhase[i]);
         const reorderedPosSpeed     = ord.map(i => posJitSpeed[i]);
+        const reorderedSpinOffsets  = ord.map(i => spinOffsetDeg[i]);
+        const reorderedSpinTweens   = ord.map(i => spinTweens[i]);
         bolts = reorderedBolts;
         jitterAngles = reorderedJitterAngles;
         lastBaseRot = reorderedLastBaseRot;
         endJitterDeg = reorderedEndJitter;
         posJitPhase = reorderedPosPhase;
         posJitSpeed = reorderedPosSpeed;
+        spinOffsetDeg = reorderedSpinOffsets;
+        spinTweens = reorderedSpinTweens;
         dashItem = bolts.find(b => b && b.data && b.data.key === '-') || null;
     }
 
@@ -1083,6 +1158,7 @@ function maybeReverseTargets(tgs){
         arrangeBtn.addEventListener('click', () => {
             if (_isScrambling) return;
             rearrangeBoltsLeftToRight(!PATH_ORDER_REVERSED);
+            try { syncControlsActiveState(); } catch(_){ }
         });
     }
 
