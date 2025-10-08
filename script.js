@@ -836,7 +836,6 @@ function applyPose() {
             if (!bar) return;
             const all = bar.querySelectorAll('.kbd');
             all.forEach(el => {
-                // keep left-mouse state driven by pulses toggle
                 if (el.getAttribute('data-key') !== 'left-mouse') el.classList.remove('active');
             });
             const poseEl = bar.querySelector(`.kbd[data-key="${currentPoseId}"]`);
@@ -851,10 +850,8 @@ function applyPose() {
     // Spin helper: rotate the 'C' bolt 360° with easing
     function spinCOnce(){
         if (!bolts || !bolts.length) return;
-        // Spin the inverted C
         const idx = bolts.findIndex(b => b && b.data && b.data.key === 'C-inverted');
         if (idx < 0) return;
-        // If an existing spin is running, kill it first
         try { if (spinTweens[idx]) spinTweens[idx].kill(); } catch(_){}
         const state = { v: 0 };
         const dur = 0.8;
@@ -912,7 +909,7 @@ function maybeReverseTargets(tgs){
     // Raw path slots (original generator order) for the current pose
     function getRawSlotsForPose(id){
         switch (id) {
-            case 0: { // begin/stacked
+            case 0: { // begin
                 return new Array(N).fill(0).map(() => ({ pos: new Point(centerX, centerY), rot: 0 }));
             }
             case 1: { // line
@@ -985,7 +982,7 @@ function maybeReverseTargets(tgs){
                 p.remove();
                 return slots;
             }
-            case 6: { // arrow '>' with thick tip
+            case 6: { // arrow
                 const halfH = Math.min(W, H) * 0.33 * SCALE;
                 const halfW = halfH * 0.6;
                 const tipW = SPACING * 2.0;
