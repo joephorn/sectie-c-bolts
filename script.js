@@ -24,7 +24,7 @@ let SCALE = 0.75; // made dynamic to allow runtime scaling
 const BASE_SPACING = 110;
 let SPACING = BASE_SPACING * SCALE; // recomputed when SCALE changes
 const JITTER_MAX_DEG = 50;
-const END_JITTER_MAX_DEG = 7;
+const END_JITTER_MAX_DEG = 10;
 
 // Mid-animation rotation (driven by jitter slider): ramp in, then click off
 const MIDJIT_ENABLE   = true;   // master toggle
@@ -328,7 +328,8 @@ function setTargets(targets, dur = 0.8){
     _startPoseTween(dur, () => {
       isAnimating = false;
       poseTween = null;
-      if (_isScrambling && _scrambleQueue && _scrambleQueue.length) { runNextScramble(); return; }
+      if (_isScrambling && _scrambleByTimer && _scrambleQueue && _scrambleQueue.length) { return; }
+      if (_isScrambling && !_scrambleByTimer && _scrambleQueue && _scrambleQueue.length) { runNextScramble(); return; }
       if (consumeLineQueueIfNeeded() || consumeCircleQueueIfNeeded() || consumeArrowQueueIfNeeded()) return;
       // Re-apply visibility for the final pose (e.g., pose 0 hides others, pose 6 hides dash)
       applyVisibilityForPose(currentPoseId);
@@ -638,7 +639,7 @@ function applyPose() {
             if (n === 0) { switchPose(0); return; }
             if (n>=1 && n<=9) { switchPose(n); return; }
         }
-        if (e.key === 'r' || e.key === 'R') { rearrangeBoltsLeftToRight(); return; }
+        if (e.key === 'r' || e.key === 'R') { rearrangeBoltsLeftToRight(true); return; }
         if (e.key === '[') { POSE_DUR = Math.max(0.1, +(POSE_DUR - 0.1).toFixed(2)); }
         if (e.key === ']') { POSE_DUR = Math.min(3.0, +(POSE_DUR + 0.1).toFixed(2)); }
         if (e.key === 'e') {
@@ -862,6 +863,8 @@ function applyPose() {
     // --- Arrange with scramble (split-flap style) ---------------------
     let _scrambleQueue = [];
     let _isScrambling = false;
+    let _scrambleByTimer = false;
+    const SCRAMBLE_TICK_MS = 120;
 
     function getPathSlots(reverse){
         const raw = getRawSlotsForPose(currentPoseId);
@@ -906,8 +909,15 @@ function applyPose() {
             return;
         }
         const targets = _scrambleQueue.shift();
-        const dur = _scrambleQueue.length ? 0.08 : 0.18;
-        setTargets(targets, dur);
+        // Teleport: no tween, snap instantly
+        setTargets(targets, 0);
+        // Schedule next step after a short delay so flicker is visible
+        if (_scrambleQueue.length) {
+            setTimeout(runNextScramble, SCRAMBLE_TICK_MS);
+        } else {
+            _isScrambling = false;
+            applyVisibilityForPose(currentPoseId);
+        }
     }
 
     function rearrangeBoltsLeftToRight(reverse = false){
@@ -920,6 +930,7 @@ function applyPose() {
         for (let i=0;i<flickers;i++) _scrambleQueue.push(buildRandomTargetsFromSlots(slots));
         _scrambleQueue.push(buildFinalTargetsFromSlots(slots));
         _isScrambling = true;
+        _scrambleByTimer = true;
         runNextScramble();
     }
 
