@@ -328,6 +328,7 @@ function setTargets(targets, dur = 0.8){
     _startPoseTween(dur, () => {
       isAnimating = false;
       poseTween = null;
+      if (_isScrambling && _scrambleQueue && _scrambleQueue.length) { runNextScramble(); return; }
       if (consumeLineQueueIfNeeded() || consumeCircleQueueIfNeeded() || consumeArrowQueueIfNeeded()) return;
       // Re-apply visibility for the final pose (e.g., pose 0 hides others, pose 6 hides dash)
       applyVisibilityForPose(currentPoseId);
@@ -637,12 +638,9 @@ function applyPose() {
             if (n === 0) { switchPose(0); return; }
             if (n>=1 && n<=9) { switchPose(n); return; }
         }
-        // Reverse/Arrange shortcut
         if (e.key === 'r' || e.key === 'R') { rearrangeBoltsLeftToRight(); return; }
-        // Quick adjust pose duration with [ and ]
         if (e.key === '[') { POSE_DUR = Math.max(0.1, +(POSE_DUR - 0.1).toFixed(2)); }
         if (e.key === ']') { POSE_DUR = Math.min(3.0, +(POSE_DUR + 0.1).toFixed(2)); }
-        // Cycle global easing with 'e'
         if (e.key === 'e') {
           const idx = (EASE_MODES.indexOf(EASE_MODE) + 1) % EASE_MODES.length;
           EASE_MODE = EASE_MODES[idx];
@@ -733,57 +731,196 @@ function applyPose() {
         return null;
     }
 
-    function rearrangeBoltsLeftToRight(reverse = false){
-        if (!ready || !bolts || bolts.length !== N) return;
+    // Raw path slots (original generator order) for the current pose
+    function getRawSlotsForPose(id){
+        switch (id) {
+            case 0: { // begin/stacked
+                return new Array(N).fill(0).map(() => ({ pos: new Point(centerX, centerY), rot: 0 }));
+            }
+            case 1: { // line
+                const totalLength = SPACING * (N - 1);
+                const half = totalLength / 2;
+                const a = lineRotDeg * Math.PI / 180;
+                const cos = Math.cos(a), sin = Math.sin(a);
+                const x1 = -half * cos, y1 = -half * sin;
+                const x2 =  half * cos, y2 =  half * sin;
+                const p = makeLinePath(x1, y1, x2, y2);
+                const slots = distributeOnSinglePathWithSpacing(p, N, SPACING, 'upright');
+                p.remove();
+                return slots;
+            }
+            case 2: { // offset line
+                const totalLength = SPACING * (N - 1);
+                const xStart = -totalLength / 2 * 0.85;
+                const OFF = SPACING * 0.25;
+                const slots = [];
+                for (let i = 0; i < N; i++) {
+                    const x = xStart + i * SPACING*0.85;
+                    const y = (i % 2 === 0 ? -OFF : OFF);
+                    slots.push({ pos: new Point(centerX + x, centerY + y), rot: 0 });
+                }
+                return slots;
+            }
+            case 3: { // arc up
+                const baseR = Math.min(W, H) * 0.28 * SCALE;
+                const rx = baseR * 1.4;
+                const ry = baseR * 0.9;
+                const startAngle = 200;
+                const endAngle = -20;
+                const p = new Path({ strokeColor: null });
+                const steps = 40;
+                for (let i = 0; i <= steps; i++){
+                    const t = i/steps;
+                    const ang = (startAngle + (endAngle - startAngle)*t) * Math.PI/180;
+                    p.add(new Point(Math.cos(ang)*rx, Math.sin(ang)*ry));
+                }
+                p.smooth({ type: 'continuous' });
+                const slots = distributeOnPaths([p], N, 'upright');
+                p.remove();
+                return slots;
+            }
+            case 4: { // arc down
+                const baseR = Math.min(W, H) * 0.28 * SCALE;
+                const rx = baseR * 1.4;
+                const ry = baseR * -0.9;
+                const startAngle = 200;
+                const endAngle = -20;
+                const p = new Path({ strokeColor: null });
+                const steps = 40;
+                for (let i = 0; i <= steps; i++){
+                    const t = i/steps;
+                    const ang = (startAngle + (endAngle - startAngle)*t) * Math.PI/180;
+                    p.add(new Point(Math.cos(ang)*rx, Math.sin(ang)*ry));
+                }
+                p.smooth({ type: 'continuous' });
+                const slots = distributeOnPaths([p], N, 'upright');
+                p.remove();
+                return slots;
+            }
+            case 5: { // circle
+                const r = Math.min(W,H) * 0.25 * SCALE;
+                const sweep = 360 * CIRCLE_FRACTION;
+                const startAngle = circleRotDeg - sweep/2;
+                const endAngle   = circleRotDeg + sweep/2;
+                const p = makeArcPath(0, 0, r, startAngle, endAngle);
+                const slots = distributeOnPaths([p], N, 'upright');
+                p.remove();
+                return slots;
+            }
+            case 6: { // arrow '>' with thick tip
+                const halfH = Math.min(W, H) * 0.33 * SCALE;
+                const halfW = halfH * 0.6;
+                const tipW = SPACING * 2.0;
+                const basePts = [
+                    [-halfW, -halfH],
+                    [ halfW, -tipW/4 ],
+                    [ halfW, tipW/4 ],
+                    [-halfW,  halfH]
+                ];
+                const a = arrowRotDeg * Math.PI / 180;
+                const c = Math.cos(a), s = Math.sin(a);
+                const pts = basePts.map(([x,y]) => [x*c - y*s, x*s + y*c]);
+                const p = makePolylineSharp(pts);
+                const slots = distributeOnPaths([p], N, 'upright');
+                p.remove();
+                return slots;
+            }
+            case 7: { // plus
+                const offsets = [
+                    new Point(0, -2*SPACING + SPACING/4),
+                    new Point(0, -1*SPACING + SPACING/4),
+                    new Point(-2*SPACING + SPACING/4, 0),
+                    new Point(-1*SPACING + SPACING/4, 0),
+                    new Point( 1*SPACING - SPACING/4, 0),
+                    new Point( 2*SPACING - SPACING/4, 0),
+                    new Point(0,  1*SPACING - SPACING/4),
+                    new Point(0,  2*SPACING - SPACING/4)
+                ];
+                const cx = centerX, cy = centerY;
+                return offsets.slice(0, N).map(off => ({ pos: off.add(new Point(cx, cy)), rot: 0 }));
+            }
+            case 8: { // X
+                const s = SPACING;
+                const r2 = Math.SQRT2;
+                const offsets = [
+                    new Point(-2*s/r2, -2*s/r2),
+                    new Point(-s/r2,  -s/r2),
+                    new Point(-2*s/r2,  2*s/r2),
+                    new Point(-s/r2,   s/r2),
+                    new Point(s/r2,   -s/r2),
+                    new Point(2*s/r2, -2*s/r2),
+                    new Point(s/r2,    s/r2),
+                    new Point(2*s/r2,  2*s/r2)
+                ];
+                const cx = centerX, cy = centerY;
+                return offsets.slice(0, N).map(off => ({ pos: off.add(new Point(cx, cy)), rot: 0 }));
+            }
+        }
+        return null;
+    }
 
-        // Compute current targets and derive PATH order (index order from generator)
-        const tgs = targetsForPose(currentPoseId);
-        if (!tgs) return;
-        // Path order = as-generated order of targets (works for line, arcs, circle, arrow)
-        const slotOrderPath = Array.from({length: N}, (_, i) => i);
-        if (reverse) slotOrderPath.reverse();
+    // --- Arrange with scramble (split-flap style) ---------------------
+    let _scrambleQueue = [];
+    let _isScrambling = false;
 
-        // Desired letter order from filenames
-        const desiredKeys = BOLT_FILES.map(keyFromPath);
+    function getPathSlots(reverse){
+        const raw = getRawSlotsForPose(currentPoseId);
+        if (!raw) return null;
+        return reverse ? raw.slice().reverse() : raw;
+    }
+
+    function buildFinalTargetsFromSlots(slots){
+        // Map canonical keys to path slots, assign bolts by key in order
+        const keys = BOLT_FILES.map(keyFromPath);
         const indicesByKey = new Map();
         for (let i = 0; i < bolts.length; i++){
             const key = (bolts[i].data && bolts[i].data.key) || '';
             if (!indicesByKey.has(key)) indicesByKey.set(key, []);
             indicesByKey.get(key).push(i);
         }
-        const taken = new Set();
-        const boltIdxByKeyOrder = [];
-        for (const key of desiredKeys){
+        const nextByKey = new Map();
+        const tgs = new Array(N);
+        for (let s = 0; s < N; s++){
+            const key = keys[s] || '';
             const list = indicesByKey.get(key) || [];
-            const idx = list.find(j => !taken.has(j));
-            if (typeof idx === 'number') { taken.add(idx); boltIdxByKeyOrder.push(idx); }
+            const ptr = nextByKey.get(key) || 0;
+            const boltIdx = list[Math.min(ptr, Math.max(0, list.length - 1))];
+            nextByKey.set(key, ptr + 1);
+            if (typeof boltIdx === 'number') tgs[boltIdx] = slots[s];
         }
-        for (let i = 0; i < bolts.length; i++) if (!taken.has(i)) boltIdxByKeyOrder.push(i);
-        if (boltIdxByKeyOrder.length !== N) return;
+        // Fill any leftovers
+        for (let i = 0; i < N; i++) if (!tgs[i]) tgs[i] = slots[Math.min(i, slots.length - 1)];
+        return tgs;
+    }
 
-        // Map each PATH slot to the corresponding letter bolt in SECTIE‑C order
-        const newOrder = new Array(N);
-        for (let i = 0; i < N; i++){
-            const slotIdx = slotOrderPath[i];
-            newOrder[slotIdx] = boltIdxByKeyOrder[i];
+    function buildRandomTargetsFromSlots(slots){
+        const idx = Array.from({length:N}, (_,i)=>i);
+        for (let i=idx.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); const t=idx[i]; idx[i]=idx[j]; idx[j]=t; }
+        return idx.map(i => slots[i]);
+    }
+
+    function runNextScramble(){
+        if (!_scrambleQueue.length){
+            _isScrambling = false;
+            applyVisibilityForPose(currentPoseId);
+            return;
         }
+        const targets = _scrambleQueue.shift();
+        const dur = _scrambleQueue.length ? 0.08 : 0.18;
+        setTargets(targets, dur);
+    }
 
-        // Reorder bolts and per-bolt state arrays
-        const reorderedBolts = newOrder.map(i => bolts[i]);
-        const reorderedJitterAngles = newOrder.map(i => jitterAngles[i]);
-        const reorderedLastBaseRot  = newOrder.map(i => lastBaseRot[i]);
-        const reorderedEndJitter    = newOrder.map(i => endJitterDeg[i]);
-
-        bolts = reorderedBolts;
-        jitterAngles = reorderedJitterAngles;
-        lastBaseRot = reorderedLastBaseRot;
-        endJitterDeg = reorderedEndJitter;
-
-        // Refresh dash reference and re-apply visibility if needed
-        dashItem = bolts.find(b => b && b.data && b.data.key === '-') || null;
-
-        setTargets(tgs, 0.5);
-        applyVisibilityForPose(currentPoseId);
+    function rearrangeBoltsLeftToRight(reverse = false){
+        if (!ready || !bolts || bolts.length !== N) return;
+        const slots = getPathSlots(reverse);
+        if (!slots) return;
+        // Build a scramble sequence of target arrays
+        _scrambleQueue = [];
+        const flickers = 3; // number of random steps
+        for (let i=0;i<flickers;i++) _scrambleQueue.push(buildRandomTargetsFromSlots(slots));
+        _scrambleQueue.push(buildFinalTargetsFromSlots(slots));
+        _isScrambling = true;
+        runNextScramble();
     }
 
     const arrangeBtn = document.getElementById('arrange-ltr');
