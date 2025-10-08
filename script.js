@@ -20,9 +20,9 @@ const W = view.bounds.width;
 const H = view.bounds.height;
 const centerX = W/2;
 const centerY = H/2;
-const SCALE = 0.75;
+let SCALE = 0.75; // made dynamic to allow runtime scaling
 const BASE_SPACING = 110;
-const SPACING = BASE_SPACING * SCALE;
+let SPACING = BASE_SPACING * SCALE; // recomputed when SCALE changes
 const JITTER_MAX_DEG = 50;
 const END_JITTER_MAX_DEG = 7;
 
@@ -335,6 +335,21 @@ function setTargets(targets, dur = 0.8){
         switchPose(id);
       }
     });
+}
+
+// Allow changing SCALE at runtime and reflow current pose
+let _savedScaleForRecord = null;
+function setScaleValue(newScale){
+    if (typeof newScale !== 'number' || !isFinite(newScale) || newScale <= 0) return;
+    SCALE = newScale;
+    SPACING = BASE_SPACING * SCALE;
+    if (bolts && bolts.length){
+        for (let i = 0; i < bolts.length; i++) {
+            try { bolts[i].scaling = SCALE; } catch(_){}
+        }
+        const tgs = targetsForPose(currentPoseId);
+        if (tgs) setTargets(tgs, 0);
+    }
 }
 
 function applyVisibilityForPose(poseId){
@@ -671,9 +686,19 @@ function applyPose() {
         const tw = Number(d && d.targetW) || 4096;
         const th = Number(d && d.targetH) || 4096;
         applyRecordSizing(tw, th);
+        // Optional content scale: simply bump global SCALE
+        const cs = (d && d.contentScale != null) ? Number(d.contentScale) : 1;
+        if (isFinite(cs) && cs > 0 && cs !== 1) {
+            _savedScaleForRecord = SCALE;
+            setScaleValue(SCALE * cs);
+        }
     });
     window.addEventListener('recorder:stop', () => {
         restoreInteractiveSizing();
+        if (_savedScaleForRecord != null) {
+            setScaleValue(_savedScaleForRecord);
+            _savedScaleForRecord = null;
+        }
     });
 
     // --- Arrange button: enforce left-to-right letter order for current pose ---

@@ -95,7 +95,7 @@
                     return;
                 }
                 // schaal main canvas-buffers voor opname (max ~4k)
-                window.dispatchEvent(new CustomEvent('recorder:start', { detail: { targetW: 4096, targetH: 4096 } }));
+                window.dispatchEvent(new CustomEvent('recorder:start', { detail: { targetW: 4096, targetH: 4096, contentScale: 1 } }));
                 // stream exact op canvas-resolutie (afhankelijk van jouw canvas.width/height)
                 stream = canvas.captureStream(FPS);
                 const opts = { mimeType: type };
