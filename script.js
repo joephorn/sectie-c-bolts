@@ -370,10 +370,6 @@ function applyVisibilityForPose(poseId){
         for (let i = 0; i < bolts.length; i++) bolts[i].visible = (bolts[i] === cInv);
         return;
     }
-    if (poseId === 6) {
-        const d = dashItem || bolts[DASH_INDEX];
-        if (d) d.visible = false;
-    }
 }
 
 function applyPose() {
@@ -538,9 +534,12 @@ function applyPose() {
         const halfH = Math.min(W, H) * 0.33 * SCALE; // vertical half-height
         const halfW = halfH * 0.6;                    // narrower horizontal half-width
 
+        // Make the tip thicker by adding a short flat segment at the apex
+        const tipW = SPACING * 2.0; // adjust for wider/narrower tip
         const basePts = [
             [-halfW, -halfH],
-            [ halfW,   0     ],
+            [ halfW, -tipW/4 ],
+            [ halfW, tipW/4 ],
             [-halfW,  halfH]
         ];
 
@@ -550,23 +549,8 @@ function applyPose() {
         const pts = basePts.map(([x,y]) => [x*c - y*s, x*s + y*c]);
 
         const p = makePolylineSharp(pts);
-
-        // Distribute N-1 items (exclude dash) so spacing stays tight
-        const count = Math.max(0, N - 1);
-        const targetsShort = distributeOnPaths([p], count, 'upright');
+        const targets = distributeOnPaths([p], N, 'upright'); // include '-'
         p.remove();
-
-        // Map back to full list while skipping the dash dynamically
-        const dashIdxDyn = bolts.findIndex(b => b && b.data && b.data.key === '-');
-        const targets = new Array(N);
-        let k = 0;
-        for (let i = 0; i < N; i++) {
-            if (i === dashIdxDyn) continue; // skip dash
-            targets[i] = targetsShort[k++];
-        }
-        if (dashIdxDyn >= 0 && dashIdxDyn < N) {
-            targets[dashIdxDyn] = { pos: new Point(centerX, centerY), rot: 0 };
-        }
         return targets;
     }
     
@@ -653,6 +637,8 @@ function applyPose() {
             if (n === 0) { switchPose(0); return; }
             if (n>=1 && n<=9) { switchPose(n); return; }
         }
+        // Reverse/Arrange shortcut
+        if (e.key === 'r' || e.key === 'R') { rearrangeBoltsLeftToRight(); return; }
         // Quick adjust pose duration with [ and ]
         if (e.key === '[') { POSE_DUR = Math.max(0.1, +(POSE_DUR - 0.1).toFixed(2)); }
         if (e.key === ']') { POSE_DUR = Math.min(3.0, +(POSE_DUR + 0.1).toFixed(2)); }
