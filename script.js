@@ -24,6 +24,8 @@ let SCALE = 0.75; // made dynamic to allow runtime scaling
 const BASE_SPACING = 110;
 let SPACING = BASE_SPACING * SCALE; // recomputed when SCALE changes
 const JITTER_MAX_DEG = 50;
+// Position jitter (px) added during tweens to break straight-line feel
+const POS_JITTER_MAX_PX = 18; // scaled by SCALE and jitter slider
 // Global render/update frame rate (canvas + GSAP)
 let TARGET_FPS = 30; // target render/update frame rate
 function setTargetFps(fps){
@@ -90,6 +92,9 @@ let dashItem = null;
 let jitterAmt = 0;        // 0..1 from the slider
 let jitterAngles = new Array(N).fill(0).map(() => (Math.random()*2 - 1)); // per-bolt direction [-1,1]
 let endJitterDeg = new Array(N).fill(0); // per-bolt end-state rotation jitter
+// Per-bolt waveform for position jitter
+let posJitPhase = new Array(N).fill(0).map(() => Math.random() * Math.PI * 2);
+let posJitSpeed = new Array(N).fill(0).map(() => 0.6 + Math.random() * 1.1); // cycles/sec
 
 const jitterEl = document.getElementById('jitter');
 const jitterValEl = document.getElementById('jitterVal');
@@ -465,6 +470,32 @@ function applyPose() {
 
         // base interpolation using stepped times
         const p = a.pos.add( b.pos.subtract(a.pos).multiply(tPosUsed) );
+        // subtle up/down position jitter during animation to avoid moving strictly along a line
+        let pJittered = p;
+        if (isAnimating && jitterAmt > 0) {
+            // Smoothly ramp jitter in and out similar to rotation jitter
+            let sJ = 0;
+            if (tGlobal < MIDJIT_CLICK_T) {
+                const denomJ = Math.max(1e-6, MIDJIT_IN_END - MIDJIT_IN_START);
+                const uJ = (tGlobal - MIDJIT_IN_START) / denomJ;
+                sJ = uJ <= 0 ? 0 : (uJ >= 1 ? 1 : (uJ*uJ*(3 - 2*uJ)));
+            }
+            if (sJ > 0) {
+                // Direction perpendicular to movement (fallback to world up)
+                const mv = b.pos.subtract(a.pos);
+                let nx = -mv.y, ny = mv.x;
+                const nlen = Math.hypot(nx, ny) || 1;
+                nx /= nlen; ny /= nlen;
+                const tSec = (now || Date.now()) / 1000;
+                const phase = posJitPhase[i] || 0;
+                const speed = posJitSpeed[i] || 1;
+                const wave = Math.sin(phase + tSec * speed * Math.PI * 2);
+                const ampPx = jitterAmt * sJ * POS_JITTER_MAX_PX * SCALE;
+                const offX = nx * ampPx * wave;
+                const offY = ny * ampPx * wave;
+                pJittered = p.add(new Point(offX, offY));
+            }
+        }
         let rBase = a.rot + (b.rot - a.rot) * tRotUsed; // base rotation without jitter
 
         // optional tiny settle/backlash near the very end (servo vibe)
@@ -477,10 +508,10 @@ function applyPose() {
         lastBaseRot[i] = rBase;
 
         // mini gravity snap for position near the end
-        let posFinal = p;
+        let posFinal = pJittered;
         if (tPosUsed > 0.97) {
-            const snapVec = b.pos.subtract(p).multiply(0.3); // pull 30% toward target
-            posFinal = p.add(snapVec);
+            const snapVec = b.pos.subtract(posFinal).multiply(0.3); // pull 30% toward target
+            posFinal = posFinal.add(snapVec);
         }
         bolts[i].position = posFinal;
 
@@ -1001,10 +1032,14 @@ function maybeReverseTargets(tgs){
         const reorderedJitterAngles = ord.map(i => jitterAngles[i]);
         const reorderedLastBaseRot  = ord.map(i => lastBaseRot[i]);
         const reorderedEndJitter    = ord.map(i => endJitterDeg[i]);
+        const reorderedPosPhase     = ord.map(i => posJitPhase[i]);
+        const reorderedPosSpeed     = ord.map(i => posJitSpeed[i]);
         bolts = reorderedBolts;
         jitterAngles = reorderedJitterAngles;
         lastBaseRot = reorderedLastBaseRot;
         endJitterDeg = reorderedEndJitter;
+        posJitPhase = reorderedPosPhase;
+        posJitSpeed = reorderedPosSpeed;
         dashItem = bolts.find(b => b && b.data && b.data.key === '-') || null;
     }
 
