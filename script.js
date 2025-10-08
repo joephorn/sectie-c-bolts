@@ -58,7 +58,7 @@ const BACKLASH_GAIN = 1;
 // --- Clockwork stepping (discrete tween states) ---
 // Position stepping
 const ENABLE_STEPPED_TIME = true;
-const STEP_COUNT          = 3;
+const STEP_COUNT          = 4;
 const STEP_JITTER         = 0.5;
 
 // Rotation stepping (independent from position)
@@ -329,6 +329,8 @@ function setTargets(targets, dur = 0.8){
       isAnimating = false;
       poseTween = null;
       if (consumeLineQueueIfNeeded() || consumeCircleQueueIfNeeded() || consumeArrowQueueIfNeeded()) return;
+      // Re-apply visibility for the final pose (e.g., pose 0 hides others, pose 6 hides dash)
+      applyVisibilityForPose(currentPoseId);
       if (pendingPoseId !== null) {
         const id = pendingPoseId;
         pendingPoseId = null;
@@ -348,13 +350,26 @@ function setScaleValue(newScale){
             try { bolts[i].scaling = SCALE; } catch(_){}
         }
         const tgs = targetsForPose(currentPoseId);
-        if (tgs) setTargets(tgs, 0);
+        if (tgs) {
+            setTargets(tgs, 0);
+            applyVisibilityForPose(currentPoseId);
+        }
     }
 }
 
 function applyVisibilityForPose(poseId){
     if (!bolts.length) return;
     for (let i = 0; i < bolts.length; i++) bolts[i].visible = true;
+    // Pose 0: show only C-inverted
+    if (poseId === 0) {
+        if (isAnimating) {
+            // During the tween to pose 0, keep all visible so they animate to center
+            return;
+        }
+        const cInv = bolts.find(b => b && b.data && b.data.key === 'C-inverted') || null;
+        for (let i = 0; i < bolts.length; i++) bolts[i].visible = (bolts[i] === cInv);
+        return;
+    }
     if (poseId === 6) {
         const d = dashItem || bolts[DASH_INDEX];
         if (d) d.visible = false;
@@ -597,6 +612,15 @@ function applyPose() {
         return targets;
     }
 
+    // ----------------- Begin / Only C-inverted -----------------
+    function poseBeginStacked(){
+        const targets = new Array(N).fill(0).map(() => ({ pos: new Point(centerX, centerY), rot: 0 }));
+        return targets;
+    }
+
+    // Pose 0 animates like other poses. Visibility is handled so that
+    // everything remains visible during the tween, then only C‑inverted stays.
+
     // ----------------- Keyboard -----------------
     function switchPose(id){
         if (isAnimating) {
@@ -606,6 +630,7 @@ function applyPose() {
         currentPoseId = id;
         let targets;
         switch (id) {
+          case 0: targets = poseBeginStacked(); break;
           case 1: targets = poseLine(); break;
           case 2: targets = poseOffsetLine(); break;
           case 3: targets = poseArcUp(); break;
@@ -617,12 +642,17 @@ function applyPose() {
           default: break;
         }
         if (targets) setTargets(targets, POSE_DUR);
+        // For pose 0 keep all visible during animation; applyVisibilityForPose
+        // will hide others after tween completes.
         applyVisibilityForPose(id);
     }
 
     tool.onKeyDown = function(e){
         const n = parseInt(e.key, 10);
-        if (n>=1 && n<=9) switchPose(n);
+        if (!isNaN(n)) {
+            if (n === 0) { switchPose(0); return; }
+            if (n>=1 && n<=9) { switchPose(n); return; }
+        }
         // Quick adjust pose duration with [ and ]
         if (e.key === '[') { POSE_DUR = Math.max(0.1, +(POSE_DUR - 0.1).toFixed(2)); }
         if (e.key === ']') { POSE_DUR = Math.min(3.0, +(POSE_DUR + 0.1).toFixed(2)); }
@@ -673,9 +703,9 @@ function applyPose() {
             el.addEventListener('click', () => {
                 const attr = el.getAttribute('data-key');
                 const key = attr ? parseInt(attr, 10) : parseInt((el.textContent||'').trim(), 10);
-                if (!isNaN(key)) {
-                    switchPose(key);
-                }
+                if (isNaN(key)) return;
+                if (key === 0) { switchPose(0); return; }
+                switchPose(key);
             });
         });
     })();
@@ -704,6 +734,7 @@ function applyPose() {
     // --- Arrange button: enforce left-to-right letter order for current pose ---
     function targetsForPose(id){
         switch (id) {
+            case 0: return poseBeginStacked();
             case 1: return poseLine();
             case 2: return poseOffsetLine();
             case 3: return poseArcUp();
@@ -716,14 +747,15 @@ function applyPose() {
         return null;
     }
 
-    function rearrangeBoltsLeftToRight(){
+    function rearrangeBoltsLeftToRight(reverse = false){
         if (!ready || !bolts || bolts.length !== N) return;
 
-        // Compute current targets and left→right slot order
+        // Compute current targets and derive PATH order (index order from generator)
         const tgs = targetsForPose(currentPoseId);
         if (!tgs) return;
-        const slotOrderL2R = Array.from({length: N}, (_, i) => i)
-            .sort((i, j) => (tgs[i].pos.x - tgs[j].pos.x));
+        // Path order = as-generated order of targets (works for line, arcs, circle, arrow)
+        const slotOrderPath = Array.from({length: N}, (_, i) => i);
+        if (reverse) slotOrderPath.reverse();
 
         // Desired letter order from filenames
         const desiredKeys = BOLT_FILES.map(keyFromPath);
@@ -743,10 +775,10 @@ function applyPose() {
         for (let i = 0; i < bolts.length; i++) if (!taken.has(i)) boltIdxByKeyOrder.push(i);
         if (boltIdxByKeyOrder.length !== N) return;
 
-        // Map each left→right slot to the corresponding letter bolt
+        // Map each PATH slot to the corresponding letter bolt in SECTIE‑C order
         const newOrder = new Array(N);
         for (let i = 0; i < N; i++){
-            const slotIdx = slotOrderL2R[i];
+            const slotIdx = slotOrderPath[i];
             newOrder[slotIdx] = boltIdxByKeyOrder[i];
         }
 
@@ -770,8 +802,9 @@ function applyPose() {
 
     const arrangeBtn = document.getElementById('arrange-ltr');
     if (arrangeBtn){
-        arrangeBtn.addEventListener('click', () => {
-            rearrangeBoltsLeftToRight();
+        arrangeBtn.addEventListener('click', (e) => {
+            const reverse = !!(e && (e.shiftKey || e.altKey));
+            rearrangeBoltsLeftToRight(reverse);
         });
     }
 
