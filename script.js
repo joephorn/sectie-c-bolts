@@ -8,6 +8,113 @@ paper.setup(canvas);
 const { Path, Point, view, project, SymbolDefinition, Tool } = paper;
 const tool = new Tool();
 
+// ----------------- Background Lines -----------------
+let bgGroup = null;          // root group (with clip mask + lines subgroup)
+let bgMask = null;           // clip rectangle (we update during tween)
+let bgLinesGroup = null;     // holds the vertical line paths
+let bgTween = null;          // gsap tween handle
+let bgEnabled = false;       // current toggle state
+const BG_COLOR = '#e9e9e9';
+const BG_WIDTH = 1;          // px stroke width
+const BG_EASE = 'power2.inOut';
+const BG_DUR = 0.6;          // seconds
+
+function destroyBg(){
+    try { if (bgTween) bgTween.kill(); } catch(_){}
+    bgTween = null;
+    if (bgGroup) { try { bgGroup.remove(); } catch(_){} }
+    bgGroup = null;
+    bgMask = null;
+    bgLinesGroup = null;
+}
+
+function buildBg(){
+    destroyBg();
+    const Wv = view.bounds.width;
+    const Hv = view.bounds.height;
+    // Lines
+    const lines = [];
+    const step = Math.max(16, Math.round(SPACING));
+    for (let x = 0; x <= Wv + 1; x += step){
+        const p = new Path({ segments: [ [x, 0], [x, Hv] ], strokeColor: BG_COLOR, strokeWidth: BG_WIDTH, strokeCap: 'butt' });
+        p.applyMatrix = true;
+        lines.push(p);
+    }
+    bgLinesGroup = new paper.Group({ children: lines });
+    // Clip mask (start hidden at right edge)
+    const rect = new paper.Rectangle(Wv, 0, 0.0001, Hv);
+    bgMask = new Path.Rectangle(rect);
+    bgMask.clipMask = true;
+    // Root group with mask as first child
+    bgGroup = new paper.Group();
+    bgGroup.addChild(bgMask);
+    bgGroup.addChild(bgLinesGroup);
+    try { bgGroup.sendToBack(); } catch(_){}
+    bgGroup.visible = false;
+}
+
+function applyBgMaskProgress(p, mode){
+    if (!bgGroup || !bgLinesGroup) return;
+    const Wv = view.bounds.width;
+    const Hv = view.bounds.height;
+    const clamped = Math.max(0, Math.min(1, p||0));
+    let left = 0, w = 0.0001;
+    if (mode === 'in'){
+        // Reveal from right -> left
+        w = Math.max(0.0001, Wv * clamped);
+        left = Wv - w;
+    } else {
+        // Hide from left -> right
+        w = Math.max(0.0001, Wv * (1 - clamped));
+        left = 0;
+    }
+    const rect = new paper.Rectangle(left, 0, w, Hv);
+    if (bgMask) { try { bgMask.remove(); } catch(_){} }
+    bgMask = new Path.Rectangle(rect);
+    bgMask.clipMask = true;
+    // ensure mask is first child
+    try { bgGroup.insertChild(0, bgMask); } catch(_){ bgGroup.addChild(bgMask); }
+}
+
+function setBgEnabled(on){
+    const want = !!on;
+    if (!bgGroup) buildBg();
+    if (!bgGroup) return;
+    if (bgTween) { try { bgTween.kill(); } catch(_){} bgTween = null; }
+    bgGroup.visible = true;
+    const state = { t: 0 };
+    let fromT = 0, toT = 1, mode = 'in';
+    const Wv = view.bounds.width;
+    const currFrac = (bgMask && Wv > 0) ? Math.max(0, Math.min(1, (bgMask.bounds.width || 0) / Wv)) : 0;
+    if (want && !bgEnabled){
+        // In: right -> left — start from current fraction if any
+        mode = 'in';
+        fromT = currFrac; toT = 1;
+    } else if (!want && bgEnabled){
+        // Out: left -> right — start from current fraction
+        mode = 'out';
+        fromT = 1 - currFrac; toT = 1;
+    } else {
+        // no change
+        return;
+    }
+    state.t = fromT;
+    applyBgMaskProgress(state.t, mode);
+    bgTween = gsap.to(state, {
+        t: toT,
+        duration: BG_DUR,
+        ease: BG_EASE,
+        onUpdate: () => applyBgMaskProgress(state.t, mode),
+        onComplete: () => {
+            applyBgMaskProgress(toT, mode);
+            bgTween = null;
+            bgEnabled = want;
+            if (!bgEnabled) { try { bgGroup.visible = false; } catch(_){} }
+            try { syncControlsActiveState(); } catch(_){}
+        }
+    });
+}
+
 // ----------------- Import multiple bolts as Symbols (from /src) -----------------
 const BOLT_FILES = ['S.svg','E.svg','C.svg','T.svg','I.svg','E.svg','-.svg','C-inverted.svg'].map(f => `./src/${f}`);
 const symbols = [];
@@ -33,8 +140,8 @@ function setTargetFps(fps){
 }
 // Initialize GSAP ticker fps once
 try { if (window.gsap && gsap.ticker && typeof gsap.ticker.fps === 'function') gsap.ticker.fps(TARGET_FPS); } catch(_){ }
-const END_JITTER_MAX_DEG = 10;
-const END_POS_JITTER_MAX_PX = 5; // max eind-offset per as (px)
+const END_JITTER_MAX_DEG = 10; // rotation
+const END_POS_JITTER_MAX_PX = 5; // positie
 
 // Mid-animation rotation (driven by jitter slider): ramp in, then click off
 const MIDJIT_ENABLE   = true;   // master toggle
@@ -481,6 +588,8 @@ function setScaleValue(newScale){
             applyVisibilityForPose(currentPoseId);
         }
     }
+    // Rebuild background lines for new spacing
+    try { if (bgEnabled && !bgTween) { buildBg(); setBgEnabled(true); } } catch(_){}
 }
 
 function applyVisibilityForPose(poseId){
@@ -906,6 +1015,11 @@ function applyPose() {
             spinCOnce();
             return;
         }
+        if (e.key === 'b' || e.key === 'B') {
+            setBgEnabled(!bgEnabled);
+            try { syncControlsActiveState(); } catch(_){}
+            return;
+        }
         if (e.key === 'r' || e.key === 'R') {
             if (_isScrambling) return;
             rearrangeBoltsLeftToRight(!PATH_ORDER_REVERSED);
@@ -967,6 +1081,7 @@ function applyPose() {
                 // Special controls
                 if (attr === 'left-mouse') { setOccJitterEnabled(!OCC_JIT_ENABLE); syncControlsActiveState(); return; }
                 if (attr === 'space') { spinCOnce(); return; }
+                if (el.id === 'toggle-bg') { setBgEnabled(!bgEnabled); syncControlsActiveState(); return; }
                 // Numeric poses
                 const key = attr ? parseInt(attr, 10) : parseInt((el.textContent||'').trim(), 10);
                 if (!isNaN(key)) {
@@ -991,6 +1106,10 @@ function applyPose() {
             const rEl = document.getElementById('arrange-ltr');
             if (rEl) {
                 if (PATH_ORDER_REVERSED) rEl.classList.add('active'); else rEl.classList.remove('active');
+            }
+            const bgEl = document.getElementById('toggle-bg');
+            if (bgEl) {
+                if (bgEnabled) bgEl.classList.add('active'); else bgEl.classList.remove('active');
             }
         } catch(_){ }
     }
@@ -1313,6 +1432,63 @@ function maybeReverseTargets(tgs){
             if (_isScrambling) return;
             rearrangeBoltsLeftToRight(!PATH_ORDER_REVERSED);
             try { syncControlsActiveState(); } catch(_){ }
+        });
+    }
+
+    // ----------------- Export: Vector PDF via SVG -----------------
+    function tsString(){
+        const d = new Date();
+        const pad = n => String(n).padStart(2,'0');
+        return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
+    }
+
+    function exportSvgString(){
+        try {
+            // Use content bounds to tightly fit all items
+            return project.exportSVG({ asString: true, bounds: 'content', precision: 3 });
+        } catch (err) {
+            console.error('exportSVG failed:', err);
+            return '';
+        }
+    }
+
+    function openPrintWindowWithSvg(svgStr){
+        if (!svgStr) return;
+        const title = `sectie-c-bolts_${tsString()}`;
+        const win = window.open('', '_blank');
+        if (!win) { console.warn('Pop-up geblokkeerd: sta pop-ups toe voor export.'); return; }
+        const doc = win.document;
+        // Minimal print-friendly HTML with zero margins, preserves vectors when saved as PDF
+        const html = `<!doctype html><html><head><meta charset="utf-8" />
+            <title>${title}</title>
+            <style>
+            @page { margin: 0; }
+            html, body { margin: 0; padding: 0; background: #ffffff; }
+            /* keep SVG's own width/height; center on page when printing */
+            body { display: grid; place-items: center; min-height: 100vh; }
+            svg { display: block; }
+            .hint { position: fixed; bottom: 12px; left: 12px; font: 12px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; color:#444; opacity:.6; }
+            @media print { .hint { display: none; } }
+            </style>
+            </head><body>
+            ${svgStr}
+            <script>setTimeout(function(){ try{ window.focus(); window.print(); }catch(_){ } }, 300);<\/script>
+            </body></html>`;
+        doc.open('text/html');
+        doc.write(html);
+        doc.close();
+    }
+
+    const exportPdfBtn = document.getElementById('export-pdf');
+    if (exportPdfBtn){
+        exportPdfBtn.addEventListener('click', () => {
+            try {
+                const svg = exportSvgString();
+                if (!svg) return;
+                openPrintWindowWithSvg(svg);
+            } catch (err) {
+                console.error('Export PDF error:', err);
+            }
         });
     }
 
