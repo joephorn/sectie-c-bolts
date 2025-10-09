@@ -338,7 +338,7 @@ function consumeCircleQueueIfNeeded(){
     if (!pending) return false;
     const dir = Math.sign(pending);     // neem 1 stap richting 0
     circlePendingSteps -= dir;
-    const step = 36;
+    const step = 45;
     circleRotDeg = (circleRotDeg - dir * step) % 360; // negative keeps scroll natural
     if (circleRotDeg < 0) circleRotDeg += 360;
     setTargets(poseCircle(), ROT_DUR_CIRCLE);     // kleine tween per stap
@@ -1060,7 +1060,7 @@ function maybeReverseTargets(tgs){
     let _scrambleQueue = [];
     let _isScrambling = false;
     let _scrambleByTimer = false;
-    const SCRAMBLE_TICK_MS = 80;
+    const SCRAMBLE_TICK_MS = 100;
 
     function getPathSlots(reverse){
         const raw = getRawSlotsForPose(currentPoseId);
@@ -1163,7 +1163,7 @@ function maybeReverseTargets(tgs){
         if (!slots) return;
         // Build a scramble sequence of target arrays
         _scrambleQueue = [];
-        const flickers = 5;
+        const flickers = 6;
         for (let i=0;i<flickers;i++) _scrambleQueue.push(buildRandomTargetsFromSlots(slots));
         _scrambleFinalSlots = slots;
         _scrambleQueue.push(buildFinalTargetsFromSlots(slots));
