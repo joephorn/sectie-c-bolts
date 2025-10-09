@@ -37,9 +37,34 @@ const END_JITTER_MAX_DEG = 10;
 
 // Mid-animation rotation (driven by jitter slider): ramp in, then click off
 const MIDJIT_ENABLE   = true;   // master toggle
-const MIDJIT_IN_START = 0.10;   // tween t waar extra rotatie begint (0..1)
+const MIDJIT_IN_START = 0.00;   // tween t waar extra rotatie begint (0..1)
 const MIDJIT_IN_END   = 0.90;   // tween t waar maximale extra rotatie is bereikt
-const MIDJIT_CLICK_T  = 0.94;   // vanaf deze t valt extra rotatie weg (klik naar base)
+const MIDJIT_CLICK_T  = 1;   // vanaf deze t valt extra rotatie weg (klik naar base)
+
+// Extra roll tijdens reveal vanaf start: laat letters meer "rollen" door de beweging
+const ROLL_ENABLE      = true;
+const ROLL_IN_START    = 0.00;   // start direct subtiel
+const ROLL_IN_END      = 0.85;   // bouw op
+const ROLL_CLICK_T     = 0.90;   // klik uit net voor einde
+const ROLL_DEG_PER_PX  = 0.22;   // graden per pixel verplaatsing
+const ROLL_GLOBAL_SIGN = -1;     // optioneel 1/-1 om draairichting te wisselen
+
+// Zeer korte stagger voor transitions (bijv. ~1 frame per item)
+const STAGGER_ENABLE    = true;
+const STAGGER_FRAMES    = 2;      // 1 frame offset per volgende bolt
+const STAGGER_MAX_FRAC  = 0.4;   // max totale vertraging (als fractie van duur)
+
+// Rotatie iets langer laten aanvoelen: vertraag rotatietijd aan het begin
+// Waarde > 1 maakt de start trager (en dus langer gevoel), 1 = uit
+const ROT_TIME_POWER = 1.5;
+
+// Rotatie-tail: laat rotatie iets achter de positie aanlopen en toch op t=1 eindigen
+const ROT_TAIL_ENABLE = true;
+const ROT_TAIL_FRAC   = 0.12; // 12% vertraging van rotatie t.o.v. positie
+
+// Feather near end: stap-quantization vloeit naar smooth af in laatste stukje
+const FEATHER_END_ENABLE = true;
+const FEATHER_END_WINDOW = 0.1;
 
 let currentPoseId = 1;
 let lineRotDeg = 0;
@@ -54,11 +79,11 @@ const ROT_DUR_LINE   = 0.2;
 const ROT_DUR_CIRCLE = 0.2;
 const ROT_DUR_ARROW  = 0.2;
 
-let POSE_DUR = 0.5;
+let POSE_DUR = 0.6;
 
 // --- Global easing for pose transitions ---
 const EASE_MODES = ['trapezoid','power2','power3','expo','sine','back'];
-let EASE_MODE = 'power3'; // change to one of EASE_MODES
+let EASE_MODE = 'trapezoid'; // change to one of EASE_MODES
 
 // --- Servo feel parameters ---
 const ENABLE_BACKLASH = false;
@@ -67,12 +92,12 @@ const BACKLASH_GAIN = 1;
 // --- Clockwork stepping (discrete tween states) ---
 // Position stepping
 const ENABLE_STEPPED_TIME = true;
-const STEP_COUNT          = 4;
+const STEP_COUNT          = 3;
 const STEP_JITTER         = 0.6;
 
 // Rotation stepping (independent from position)
 const ENABLE_STEPPED_ROT  = true;
-const ROT_STEP_COUNT      = 2;
+const ROT_STEP_COUNT      = 3;
 const ROT_STEP_JITTER     = 0.5;
 
 const _dashIdx = BOLT_FILES.findIndex(p => p.includes('/-.svg'));
@@ -113,11 +138,11 @@ if (jitterEl){
 // Occasional jitter/rotate toggle (per-bolt pulses)
 // Stepped shaping for pulses (to avoid smooth sine)
 const OCC_STEPPED       = true;
-const OCC_STEP_COUNT    = 4;   // number of levels within a pulse
+const OCC_STEP_COUNT    = 10;   // number of levels within a pulse
 
 // Stepped C-inverted spin (space): quantize rotation into discrete ticks
 const SPIN_STEPPED      = true;
-const SPIN_STEP_COUNT   = 8;   // number of ticks over 360°
+const SPIN_STEP_COUNT   = 12;   // number of ticks over 360°
 let OCC_JIT_ENABLE = false;
 const OCC_INT_MIN_MS = 500;
 const OCC_INT_MAX_MS = 5000;
@@ -267,6 +292,14 @@ let isAnimating = false;
 let pendingPoseId = null; // last requested pose while animating
 let poseTween = null;     // gsap tween handle for interp
 
+// Houd animatiecontext bij (van welke pose naar welke pose)
+let transitionFromPoseId = null;
+let transitionToPoseId   = null;
+
+// Stagger-boekhouding
+let currentTweenDur = 0.8;
+let staggerRank = new Array(N).fill(0);
+
 // --- Recording sizing (4k) ---
 let isRecording = false;
 let origCanvasW = canvas.width;
@@ -377,7 +410,7 @@ function _startPoseTween(dur, onComplete){
       sine:   'sine.inOut',
       back:   'back.inOut(1.1)'
     };
-    const easeStr = map[EASE_MODE] || 'power2.inOut';
+    const easeStr = map[EASE_MODE] || 'power3.inOut';
     poseTween = gsap.to(interp, { duration: dur, t: 1, ease: easeStr, onComplete });
   }
 }
@@ -388,6 +421,21 @@ function setTargets(targets, dur = 0.8){
     toPose   = targets;
     // Generate fresh end-state jitter for this pose
     endJitterDeg = endJitterDeg.map(() => (Math.random() * 2 - 1) * END_JITTER_MAX_DEG); // uniform in [-7, +7]
+    // Stagger-setup: bereken volgorde op basis van target X (links->rechts), omgekeerd bij PATH_ORDER_REVERSED
+    try {
+        const arr = [];
+        for (let i = 0; i < N; i++){
+            const t = toPose[i] || fromPose[i];
+            const pp = (t && t.pos) ? t.pos : new Point(centerX, centerY);
+            arr.push({ i, x: pp.x, y: pp.y });
+        }
+        arr.sort((a,b) => a.x - b.x);
+        if (PATH_ORDER_REVERSED) arr.reverse();
+        const rank = new Array(N).fill(0);
+        for (let r=0; r<arr.length; r++) rank[arr[r].i] = r;
+        staggerRank = rank;
+    } catch(_) { staggerRank = new Array(N).fill(0); }
+    currentTweenDur = Math.max(1e-6, +dur || 0);
     interp.t = 0;
     if (poseTween) poseTween.kill();
     isAnimating = true;
@@ -468,7 +516,26 @@ function applyPose() {
         const a = fromPose[i] || { pos: new Point(W*0.5,H*0.5), rot: 0 };
         const b = toPose[i]   || a;
 
-        const tLocal = tGlobal;
+        let tLocal = tGlobal;
+        // Korte stagger: schuif per bolt een paar milliseconden (1 frame) op
+        // en her-normaliseer zodat elk item toch 0..1 haalt bij het globale einde
+        if (STAGGER_ENABLE && currentTweenDur > 0) {
+            const frameTime = 1 / Math.max(1, TARGET_FPS);
+            const rank      = (staggerRank && staggerRank[i]) ? staggerRank[i] : 0;
+            const maxRank   = (staggerRank && staggerRank.length) ? Math.max.apply(null, staggerRank) : (N - 1);
+            const perRankTimeWanted = Math.max(1, STAGGER_FRAMES) * frameTime; // seconden per rang
+            const maxDelayTimeWanted = perRankTimeWanted * Math.max(0, maxRank);
+            // Cap totale vertraging vs duur
+            const maxDelayNormWanted = maxDelayTimeWanted / currentTweenDur;
+            const scale = (maxDelayNormWanted > STAGGER_MAX_FRAC && maxDelayNormWanted > 0)
+                ? (STAGGER_MAX_FRAC / maxDelayNormWanted) : 1;
+            const perRankTime = perRankTimeWanted * scale;
+            const delayTime   = rank * perRankTime;
+            const maxDelayTime= Math.max(0, maxRank * perRankTime);
+            const denomTime   = Math.max(1e-6, currentTweenDur - maxDelayTime);
+            const tShifted    = (tGlobal * currentTweenDur - delayTime) / denomTime; // her-normaliseer naar 0..1
+            tLocal = Math.min(1, Math.max(0, tShifted));
+        }
 
         // clockwork stepping: quantize POSITION and ROTATION time independently
         let tPosUsed = tLocal;
@@ -481,13 +548,45 @@ function applyPose() {
             tPosUsed = Math.min(1, k * stepSize - phaseJ);
         }
 
-        let tRotUsed = tLocal;
+        // Feather near end: blend stepped -> smooth so de eindsprong klein wordt
+        if (FEATHER_END_ENABLE) {
+            const w = Math.max(0, Math.min(0.5, FEATHER_END_WINDOW));
+            if (tLocal > 1 - w) {
+                const n = Math.min(1, Math.max(0, (tLocal - (1 - w)) / Math.max(1e-6, w)));
+                const s = n*n*(3 - 2*n); // smoothstep 0..1
+                const tSmooth = tLocal;  // ongestapt
+                tPosUsed = tPosUsed*(1 - s) + tSmooth*s;
+            }
+        }
+
+        // Rotatieprogressie: optioneel tail (achterlopen) en trager begin
+        let tPhaseRot = tLocal;
+        if (typeof ROT_TAIL_FRAC === 'number' && isFinite(ROT_TAIL_FRAC) && ROT_TAIL_ENABLE) {
+            const d = Math.max(0, Math.min(0.45, ROT_TAIL_FRAC));
+            const denomLag = Math.max(1e-6, 1 - d);
+            tPhaseRot = Math.min(1, Math.max(0, (tLocal - d) / denomLag));
+        }
+        let tRotBase = tPhaseRot;
+        if (typeof ROT_TIME_POWER === 'number' && isFinite(ROT_TIME_POWER) && ROT_TIME_POWER > 1) {
+            tRotBase = Math.pow(tPhaseRot, ROT_TIME_POWER);
+        }
+        let tRotUsed = tRotBase;
         if (ENABLE_STEPPED_ROT) {
             const stepSizeR = 1 / Math.max(1, ROT_STEP_COUNT);
             const phaseJR = ROT_STEP_JITTER ? ((jitterAngles[i] || 0) * 0.5 * ROT_STEP_JITTER * stepSizeR) : 0;
-            const ttr = Math.min(1, Math.max(0, tLocal + phaseJR));
+            const ttr = Math.min(1, Math.max(0, tRotBase + phaseJR));
             const kr  = Math.floor(ttr / stepSizeR + 1e-6);
             tRotUsed  = Math.min(1, kr * stepSizeR - phaseJR);
+        }
+
+        // Feather near end for rotation as well (blend stepped -> base)
+        if (FEATHER_END_ENABLE) {
+            const w = Math.max(0, Math.min(0.5, FEATHER_END_WINDOW));
+            if (tLocal > 1 - w) {
+                const n = Math.min(1, Math.max(0, (tLocal - (1 - w)) / Math.max(1e-6, w)));
+                const s = n*n*(3 - 2*n);
+                tRotUsed = tRotUsed*(1 - s) + tRotBase*s;
+            }
         }
 
         // base interpolation using stepped times
@@ -497,9 +596,9 @@ function applyPose() {
         if (isAnimating && jitterAmt > 0) {
             // Smoothly ramp jitter in and out similar to rotation jitter
             let sJ = 0;
-            if (tGlobal < MIDJIT_CLICK_T) {
+            if (tLocal < MIDJIT_CLICK_T) {
                 const denomJ = Math.max(1e-6, MIDJIT_IN_END - MIDJIT_IN_START);
-                const uJ = (tGlobal - MIDJIT_IN_START) / denomJ;
+                const uJ = (tLocal - MIDJIT_IN_START) / denomJ;
                 sJ = uJ <= 0 ? 0 : (uJ >= 1 ? 1 : (uJ*uJ*(3 - 2*uJ)));
             }
             if (sJ > 0) {
@@ -521,7 +620,7 @@ function applyPose() {
         let rBase = a.rot + (b.rot - a.rot) * tRotUsed; // base rotation without jitter
 
         // optional tiny settle/backlash near the very end (servo vibe)
-        if (ENABLE_BACKLASH && tRotUsed > 0.98) {
+        if (ENABLE_BACKLASH && tRotUsed > 0.8) {
             const signRot = Math.sign((b.rot || 0) - (a.rot || 0)) || 0;
             const settle = (1 - tRotUsed) * BACKLASH_GAIN; // fades to 0 at end
             rBase += settle * signRot;                  // few tenths of a degree max
@@ -541,20 +640,36 @@ function applyPose() {
         let rotFinal = rBase;
         if (tRotUsed > 0.97) {
             const rotDiff = (b.rot || 0) - rBase;
-            rotFinal = rBase + rotDiff * 0.9; // pull 30% toward target rot
+            rotFinal = rBase + rotDiff * 0.8; // iets minder hard "snap" vlak voor einde
         }
 
         // mid-animation additive rotation driven by jitter slider: ramp in, then click off near the end
         let addDeg = 0;
         if (MIDJIT_ENABLE) {
-            if (tGlobal < MIDJIT_CLICK_T) {
+            if (tLocal < MIDJIT_CLICK_T) {
                 const denom = Math.max(1e-6, MIDJIT_IN_END - MIDJIT_IN_START);
-                const u = (tGlobal - MIDJIT_IN_START) / denom; // kan <0..>1 zijn
+                const u = (tLocal - MIDJIT_IN_START) / denom; // kan <0..>1 zijn
                 const s = u <= 0 ? 0 : (u >= 1 ? 1 : (u*u*(3 - 2*u))); // smoothstep 0..1
                 addDeg = s * jitterAmt * JITTER_MAX_DEG * (jitterAngles[i] || 0);
             } else {
                 addDeg = 0; // "klik" terug naar basis
             }
+        }
+        // Extra roll: rotatie proportioneel aan afgelegde afstand, alleen bij reveal vanaf start (pose 0)
+        let rollAdd = 0;
+        if (ROLL_ENABLE && isAnimating && transitionFromPoseId === 0) {
+            const mv = b.pos.subtract(a.pos);
+            const distTotal = mv.length || a.pos.getDistance(b.pos) || 0;
+            const distSoFar = distTotal * tPosUsed; // lineaire benadering
+            // richting: kies dominant component om sign te bepalen (stabieler beeld)
+            const dirSign = (Math.abs(mv.x) >= Math.abs(mv.y)) ? (mv.x >= 0 ? 1 : -1) : (mv.y >= 0 ? 1 : -1);
+            let sR = 0;
+            if (tLocal < ROLL_CLICK_T) {
+                const denomR = Math.max(1e-6, ROLL_IN_END - ROLL_IN_START);
+                const uR = (tLocal - ROLL_IN_START) / denomR;
+                sR = uR <= 0 ? 0 : (uR >= 1 ? 1 : (uR*uR*(3 - 2*uR)));
+            }
+            rollAdd = sR * distSoFar * ROLL_DEG_PER_PX * dirSign * ROLL_GLOBAL_SIGN;
         }
         // Occasional rotation pulse (sinusoidal in/out)
         let occAdd = 0;
@@ -567,7 +682,7 @@ function applyPose() {
             occAdd = (occAmpDeg[i]||0) * s;
         }
         const spinAdd = (typeof spinOffsetDeg !== 'undefined' && spinOffsetDeg[i]) ? spinOffsetDeg[i] : 0;
-        bolts[i].rotation = rotFinal + addDeg + occAdd + spinAdd;
+        bolts[i].rotation = rotFinal + addDeg + rollAdd + occAdd + spinAdd;
 
         // --- hard snap to final pose at the very end (keep small end jitter) ---
         if (interp.t >= 1) {
@@ -741,6 +856,10 @@ function applyPose() {
           pendingPoseId = id;
           return;
         }
+        // Bewaar herkomst en bestemming van de overgang (voor roll-boost bij reveal)
+        const fromId = currentPoseId;
+        transitionFromPoseId = fromId;
+        transitionToPoseId   = id;
         currentPoseId = id;
         let targets;
         switch (id) {
