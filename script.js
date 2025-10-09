@@ -34,6 +34,7 @@ function setTargetFps(fps){
 // Initialize GSAP ticker fps once
 try { if (window.gsap && gsap.ticker && typeof gsap.ticker.fps === 'function') gsap.ticker.fps(TARGET_FPS); } catch(_){ }
 const END_JITTER_MAX_DEG = 10;
+const END_POS_JITTER_MAX_PX = 5; // max eind-offset per as (px)
 
 // Mid-animation rotation (driven by jitter slider): ramp in, then click off
 const MIDJIT_ENABLE   = true;   // master toggle
@@ -123,6 +124,8 @@ let posJitSpeed = new Array(N).fill(0).map(() => 0.6 + Math.random() * 1.1); // 
 // Per-bolt additive spin offsets (deg) for ad-hoc spins (e.g., space key)
 let spinOffsetDeg = new Array(N).fill(0);
 let spinTweens = new Array(N).fill(null);
+// Eindpositie jitter (per bolt): kleine x/y offset bij rust
+let endPosJitter = new Array(N).fill(0).map(() => new Point(0,0));
 
 const jitterEl = document.getElementById('jitter');
 const jitterValEl = document.getElementById('jitterVal');
@@ -421,6 +424,11 @@ function setTargets(targets, dur = 0.8){
     toPose   = targets;
     // Generate fresh end-state jitter for this pose
     endJitterDeg = endJitterDeg.map(() => (Math.random() * 2 - 1) * END_JITTER_MAX_DEG); // uniform in [-7, +7]
+    // Genereer nieuwe eindpositie-jitter (kleine x/y offset)
+    endPosJitter = endPosJitter.map(() => new Point(
+        (Math.random()*2 - 1) * END_POS_JITTER_MAX_PX,
+        (Math.random()*2 - 1) * END_POS_JITTER_MAX_PX
+    ));
     // Stagger-setup: bereken volgorde op basis van target X (links->rechts), omgekeerd bij PATH_ORDER_REVERSED
     try {
         const arr = [];
@@ -591,8 +599,12 @@ function applyPose() {
 
         // base interpolation using stepped times
         const p = a.pos.add( b.pos.subtract(a.pos).multiply(tPosUsed) );
-        // subtle up/down position jitter during animation to avoid moving strictly along a line
-        let pJittered = p;
+        // Blend eindpositie-offset (endPosJitter) geleidelijk in tijdens de tween i.p.v. op het eind te springen
+        const pj = endPosJitter[i] || new Point(0,0);
+        const sPosOff = Math.min(1, Math.max(0, tLocal)); // volle tween 0..1, voelt natuurlijk
+        const pBase = p.add(pj.multiply(sPosOff));
+        // subtle up/down position jitter tijdens animatie om strikt-lineair pad te doorbreken
+        let pJittered = pBase;
         if (isAnimating && jitterAmt > 0) {
             // Smoothly ramp jitter in and out similar to rotation jitter
             let sJ = 0;
@@ -614,7 +626,7 @@ function applyPose() {
                 const ampPx = jitterAmt * sJ * POS_JITTER_MAX_PX * SCALE;
                 const offX = nx * ampPx * wave;
                 const offY = ny * ampPx * wave;
-                pJittered = p.add(new Point(offX, offY));
+                pJittered = pBase.add(new Point(offX, offY));
             }
         }
         let rBase = a.rot + (b.rot - a.rot) * tRotUsed; // base rotation without jitter
@@ -628,10 +640,11 @@ function applyPose() {
 
         lastBaseRot[i] = rBase;
 
-        // mini gravity snap for position near the end
+        // mini gravity snap for position near the end (richt op huidige target incl. offset-in-blend)
         let posFinal = pJittered;
         if (tPosUsed > 0.97) {
-            const snapVec = b.pos.subtract(posFinal).multiply(0.3); // pull 30% toward target
+            const posTargetNow = (b.pos || new Point(centerX, centerY)).add(pj.multiply(sPosOff));
+            const snapVec = posTargetNow.subtract(posFinal).multiply(0.3); // pull 30% toward target
             posFinal = posFinal.add(snapVec);
         }
         bolts[i].position = posFinal;
@@ -686,7 +699,8 @@ function applyPose() {
 
         // --- hard snap to final pose at the very end (keep small end jitter) ---
         if (interp.t >= 1) {
-            bolts[i].position = b.pos.clone();
+            const pj = endPosJitter[i] || new Point(0,0);
+            bolts[i].position = b.pos.add(pj);
             // keep a tiny random misalignment at rest
             const ej = endJitterDeg[i] || 0;
             const tpEnd = Math.min(1, (now - occStart[i]) / Math.max(1, occDur[i]));
@@ -1241,6 +1255,7 @@ function maybeReverseTargets(tgs){
         const reorderedJitterAngles = ord.map(i => jitterAngles[i]);
         const reorderedLastBaseRot  = ord.map(i => lastBaseRot[i]);
         const reorderedEndJitter    = ord.map(i => endJitterDeg[i]);
+        const reorderedEndPosJitter = ord.map(i => endPosJitter[i]);
         const reorderedPosPhase     = ord.map(i => posJitPhase[i]);
         const reorderedPosSpeed     = ord.map(i => posJitSpeed[i]);
         const reorderedSpinOffsets  = ord.map(i => spinOffsetDeg[i]);
@@ -1249,6 +1264,7 @@ function maybeReverseTargets(tgs){
         jitterAngles = reorderedJitterAngles;
         lastBaseRot = reorderedLastBaseRot;
         endJitterDeg = reorderedEndJitter;
+        endPosJitter = reorderedEndPosJitter;
         posJitPhase = reorderedPosPhase;
         posJitSpeed = reorderedPosSpeed;
         spinOffsetDeg = reorderedSpinOffsets;
