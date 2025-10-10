@@ -14,7 +14,7 @@ let bgMask = null;           // clip rectangle (we update during tween)
 let bgLinesGroup = null;     // holds the vertical line paths
 let bgTween = null;          // gsap tween handle
 let bgEnabled = false;       // current toggle state
-const BG_COLOR = '#e9e9e9';
+const BG_COLOR = '#ffffffff';
 const BG_WIDTH = 1;          // px stroke width
 const BG_EASE = 'power2.inOut';
 const BG_DUR = 0.6;          // seconds
@@ -1435,59 +1435,182 @@ function maybeReverseTargets(tgs){
         });
     }
 
-    // ----------------- Export: Vector PDF via SVG -----------------
+    // ----------------- Export (Clean SVG + direct PDF) -----------------
     function tsString(){
         const d = new Date();
         const pad = n => String(n).padStart(2,'0');
         return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
     }
 
-    function exportSvgString(){
+    function buildCleanExportGroup(){
+        const grp = new paper.Group();
+        grp.applyMatrix = true;
         try {
-            // Use content bounds to tightly fit all items
-            return project.exportSVG({ asString: true, bounds: 'content', precision: 3 });
+            for (const it of (bolts || [])){
+                if (!it || it.isEmpty || it.visible === false) continue;
+                let clone;
+                try { clone = it.clone(); } catch(_) { clone = null; }
+                if (!clone) continue;
+                clone.visible = true;
+                grp.addChild(clone);
+            }
+        } catch(_){ }
+        return grp;
+    }
+
+    function exportCleanSvgString(){
+        let grp = null;
+        try {
+            grp = buildCleanExportGroup();
+            if (!grp) return '';
+            const b = grp.bounds;
+            const ox = b ? b.x : 0;
+            const oy = b ? b.y : 0;
+            if (b) grp.translate(new Point(-ox, -oy));
+            const node = grp.exportSVG({ asString: false, precision: 3 });
+            if (!node) return '';
+            try {
+                const rm = node.querySelectorAll ? node.querySelectorAll('clipPath, mask') : [];
+                rm.forEach(n => n.parentNode && n.parentNode.removeChild(n));
+                const all = node.querySelectorAll ? node.querySelectorAll('[clip-path],[mask]') : [];
+                all.forEach(n => { n.removeAttribute && n.removeAttribute('clip-path'); n.removeAttribute && n.removeAttribute('mask'); });
+            } catch(_){ }
+            const w = Math.max(1, Math.ceil(b ? b.width : 0));
+            const h = Math.max(1, Math.ceil(b ? b.height : 0));
+            const ser = new XMLSerializer();
+            const inner = ser.serializeToString(node);
+            const svg = `<?xml version="1.0" encoding="UTF-8"?>\n` +
+                        `<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">` +
+                        `${inner}</svg>`;
+            return svg;
         } catch (err) {
             console.error('exportSVG failed:', err);
             return '';
+        } finally {
+            try { if (grp) grp.remove(); } catch(_){ }
         }
     }
 
-    function openPrintWindowWithSvg(svgStr){
+    function loadScript(src){
+        return new Promise((resolve, reject) => {
+            const s = document.createElement('script');
+            s.src = src;
+            s.async = true;
+            s.onload = () => resolve();
+            s.onerror = () => reject(new Error('Failed to load ' + src));
+            document.head.appendChild(s);
+        });
+    }
+
+    async function ensurePdfLibs(){
+        // Try to load libraries if missing
+        if (!(window.jspdf && window.jspdf.jsPDF) && typeof window.jsPDF === 'undefined') {
+            try { await loadScript('https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js'); } catch(_){}
+        }
+        if (!window.svg2pdf) {
+            try { await loadScript('https://unpkg.com/svg2pdf.js@2.2.5/dist/svg2pdf.umd.min.js'); } catch(_){}
+        }
+
+        const pickFn = (...cands) => cands.find(fn => typeof fn === 'function') || null;
+
+        // Resolve jsPDF constructor across different builds
+        const jsPDF = pickFn(
+            window.jspdf && window.jspdf.jsPDF,
+            window.jspdf && window.jspdf.default && window.jspdf.default.jsPDF,
+            (typeof window.jsPDF !== 'undefined' ? window.jsPDF : null),
+            (typeof jsPDF !== 'undefined' ? jsPDF : null)
+        );
+
+        // Resolve svg2pdf function across different builds
+        const svg2pdf = pickFn(
+            window.svg2pdf,
+            window.svg2pdf && window.svg2pdf.default,
+            window.svg2pdf && window.svg2pdf.svg2pdf,
+            window.svg2pdf && window.svg2pdf.default && window.svg2pdf.default.svg2pdf,
+            (typeof svg2pdf !== 'undefined' ? svg2pdf : null),
+            (typeof svg2pdf !== 'undefined' && svg2pdf.default ? svg2pdf.default : null),
+            (typeof svg2pdf !== 'undefined' && svg2pdf.svg2pdf ? svg2pdf.svg2pdf : null)
+        );
+
+        if (!jsPDF) throw new Error('jsPDF library not loaded. Check <script> includes.');
+        if (!svg2pdf) throw new Error('svg2pdf library not loaded (or wrong build). Check <script> includes.');
+
+        return { jsPDF, svg2pdf };
+    }
+
+    function parseSizeToPt(value){
+        if (!value) return NaN;
+        const m = String(value).trim().match(/^([0-9]*\.?[0-9]+)\s*(px|pt|mm|cm|in)?$/i);
+        if (!m) return NaN;
+        const num = parseFloat(m[1]);
+        const unit = (m[2] || 'px').toLowerCase();
+        switch(unit){
+            case 'pt': return num;
+            case 'in': return num * 72;
+            case 'mm': return num * (72/25.4);
+            case 'cm': return num * (72/2.54);
+            case 'px':
+            default:   return num * (72/96);
+        }
+    }
+
+    function inferSvgSizePt(svgEl){
+        const wAttr = svgEl.getAttribute('width');
+        const hAttr = svgEl.getAttribute('height');
+        let wPt = parseSizeToPt(wAttr);
+        let hPt = parseSizeToPt(hAttr);
+        if (!isFinite(wPt) || wPt <= 0 || !isFinite(hPt) || hPt <= 0) {
+            const vb = (svgEl.getAttribute('viewBox') || '').trim().split(/\s+/).map(Number);
+            if (vb.length === 4 && vb.every(v => isFinite(v))) {
+                const vw = Math.max(1, vb[2]);
+                const vh = Math.max(1, vb[3]);
+                wPt = vw * (72/96);
+                hPt = vh * (72/96);
+            }
+        }
+        if (!isFinite(wPt) || !isFinite(hPt) || wPt <= 0 || hPt <= 0) {
+            wPt = 595.28;
+            hPt = 841.89;
+        }
+        return { wPt, hPt };
+    }
+
+    async function exportPdfDirect(){
+        const svgStr = exportCleanSvgString();
         if (!svgStr) return;
-        const title = `sectie-c-bolts_${tsString()}`;
-        const win = window.open('', '_blank');
-        if (!win) { console.warn('Pop-up geblokkeerd: sta pop-ups toe voor export.'); return; }
-        const doc = win.document;
-        // Minimal print-friendly HTML with zero margins, preserves vectors when saved as PDF
-        const html = `<!doctype html><html><head><meta charset="utf-8" />
-            <title>${title}</title>
-            <style>
-            @page { margin: 0; }
-            html, body { margin: 0; padding: 0; background: #ffffff; }
-            /* keep SVG's own width/height; center on page when printing */
-            body { display: grid; place-items: center; min-height: 100vh; }
-            svg { display: block; }
-            .hint { position: fixed; bottom: 12px; left: 12px; font: 12px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; color:#444; opacity:.6; }
-            @media print { .hint { display: none; } }
-            </style>
-            </head><body>
-            ${svgStr}
-            <script>setTimeout(function(){ try{ window.focus(); window.print(); }catch(_){ } }, 300);<\/script>
-            </body></html>`;
-        doc.open('text/html');
-        doc.write(html);
-        doc.close();
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(svgStr, 'image/svg+xml');
+        const svgEl = doc.documentElement;
+        const { jsPDF, svg2pdf } = await ensurePdfLibs();
+        const { wPt, hPt } = inferSvgSizePt(svgEl);
+        const orient = wPt >= hPt ? 'landscape' : 'portrait';
+        const pdf = new jsPDF({ unit: 'pt', format: [wPt, hPt], orientation: orient });
+        await svg2pdf(svgEl, pdf, { x: 0, y: 0, width: wPt, height: hPt, preserveAspectRatio: 'xMidYMid meet' });
+        pdf.save(`sectie-c-bolts_${tsString()}.pdf`);
     }
 
     const exportPdfBtn = document.getElementById('export-pdf');
     if (exportPdfBtn){
         exportPdfBtn.addEventListener('click', () => {
+            exportPdfDirect().catch(err => console.error('Export PDF error:', err));
+        });
+    }
+    const exportSvgBtn = document.getElementById('export-svg');
+    if (exportSvgBtn){
+        exportSvgBtn.addEventListener('click', () => {
             try {
-                const svg = exportSvgString();
+                const svg = exportCleanSvgString();
                 if (!svg) return;
-                openPrintWindowWithSvg(svg);
+                const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `sectie-c-bolts_${tsString()}.svg`;
+                document.body.appendChild(a);
+                a.click();
+                setTimeout(() => { try { URL.revokeObjectURL(url); a.remove(); } catch(_){ } }, 1000);
             } catch (err) {
-                console.error('Export PDF error:', err);
+                console.error('Export SVG error:', err);
             }
         });
     }
