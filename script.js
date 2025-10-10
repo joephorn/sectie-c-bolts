@@ -1447,12 +1447,23 @@ function maybeReverseTargets(tgs){
         grp.applyMatrix = true;
         try {
             for (const it of (bolts || [])){
-                if (!it || it.isEmpty || it.visible === false) continue;
-                let clone;
-                try { clone = it.clone(); } catch(_) { clone = null; }
-                if (!clone) continue;
-                clone.visible = true;
-                grp.addChild(clone);
+                if (!it || it.visible === false) continue;
+                let node = null;
+                try {
+                    // If this is a SymbolItem (placed symbol), expand to its source geometry
+                    if (it.definition && it.definition.item) {
+                        node = it.definition.item.clone();
+                        try { node.applyMatrix = true; } catch(_){ }
+                        try { node.transform(it.matrix); } catch(_){ }
+                    } else {
+                        node = it.clone();
+                    }
+                } catch(_) {
+                    node = null;
+                }
+                if (!node) continue;
+                node.visible = true;
+                grp.addChild(node);
             }
         } catch(_){ }
         return grp;
@@ -1463,11 +1474,21 @@ function maybeReverseTargets(tgs){
         try {
             grp = buildCleanExportGroup();
             if (!grp) return '';
+            // Compute bounds safely
             const b = grp.bounds;
-            const ox = b ? b.x : 0;
-            const oy = b ? b.y : 0;
-            if (b) grp.translate(new Point(-ox, -oy));
-            const node = grp.exportSVG({ asString: false, precision: 3 });
+            const ox = (b && isFinite(b.x)) ? b.x : 0;
+            const oy = (b && isFinite(b.y)) ? b.y : 0;
+            if (isFinite(ox) && isFinite(oy)) {
+                try { grp.translate(new Point(-ox, -oy)); } catch(_){}
+            }
+            // Recompute bounds after translation
+            const bb = grp.bounds;
+            const bw = (bb && isFinite(bb.width) && bb.width > 0) ? bb.width : 1;
+            const bh = (bb && isFinite(bb.height) && bb.height > 0) ? bb.height : 1;
+            const w = Math.max(1, Math.round(bw));
+            const h = Math.max(1, Math.round(bh));
+
+            const node = grp.exportSVG({ asString: false, precision: 3, bounds: 'content' });
             if (!node) return '';
             try {
                 const rm = node.querySelectorAll ? node.querySelectorAll('clipPath, mask') : [];
@@ -1475,8 +1496,6 @@ function maybeReverseTargets(tgs){
                 const all = node.querySelectorAll ? node.querySelectorAll('[clip-path],[mask]') : [];
                 all.forEach(n => { n.removeAttribute && n.removeAttribute('clip-path'); n.removeAttribute && n.removeAttribute('mask'); });
             } catch(_){ }
-            const w = Math.max(1, Math.ceil(b ? b.width : 0));
-            const h = Math.max(1, Math.ceil(b ? b.height : 0));
             const ser = new XMLSerializer();
             const inner = ser.serializeToString(node);
             const svg = `<?xml version="1.0" encoding="UTF-8"?>\n` +
@@ -1491,109 +1510,23 @@ function maybeReverseTargets(tgs){
         }
     }
 
-    function loadScript(src){
-        return new Promise((resolve, reject) => {
-            const s = document.createElement('script');
-            s.src = src;
-            s.async = true;
-            s.onload = () => resolve();
-            s.onerror = () => reject(new Error('Failed to load ' + src));
-            document.head.appendChild(s);
-        });
-    }
+    // Expose SVG export helper for external callers
+    try { window.exportCleanSvgString = exportCleanSvgString; } catch(_){}
 
-    async function ensurePdfLibs(){
-        // Try to load libraries if missing
-        if (!(window.jspdf && window.jspdf.jsPDF) && typeof window.jsPDF === 'undefined') {
-            try { await loadScript('https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js'); } catch(_){}
+    // Build a file name slug based on the current pose
+    function poseSlug(id){
+        switch(id){
+            case 0: return 'begin';
+            case 1: return 'line';
+            case 2: return 'line-offset';
+            case 3: return 'arc-up';
+            case 4: return 'arc-down';
+            case 5: return 'circle';
+            case 6: return 'arrow';
+            case 7: return 'plus';
+            case 8: return 'x';
+            default: return `pose-${id}`;
         }
-        if (!window.svg2pdf) {
-            try { await loadScript('https://unpkg.com/svg2pdf.js@2.2.5/dist/svg2pdf.umd.min.js'); } catch(_){}
-        }
-
-        const pickFn = (...cands) => cands.find(fn => typeof fn === 'function') || null;
-
-        // Resolve jsPDF constructor across different builds
-        const jsPDF = pickFn(
-            window.jspdf && window.jspdf.jsPDF,
-            window.jspdf && window.jspdf.default && window.jspdf.default.jsPDF,
-            (typeof window.jsPDF !== 'undefined' ? window.jsPDF : null),
-            (typeof jsPDF !== 'undefined' ? jsPDF : null)
-        );
-
-        // Resolve svg2pdf function across different builds
-        const svg2pdf = pickFn(
-            window.svg2pdf,
-            window.svg2pdf && window.svg2pdf.default,
-            window.svg2pdf && window.svg2pdf.svg2pdf,
-            window.svg2pdf && window.svg2pdf.default && window.svg2pdf.default.svg2pdf,
-            (typeof svg2pdf !== 'undefined' ? svg2pdf : null),
-            (typeof svg2pdf !== 'undefined' && svg2pdf.default ? svg2pdf.default : null),
-            (typeof svg2pdf !== 'undefined' && svg2pdf.svg2pdf ? svg2pdf.svg2pdf : null)
-        );
-
-        if (!jsPDF) throw new Error('jsPDF library not loaded. Check <script> includes.');
-        if (!svg2pdf) throw new Error('svg2pdf library not loaded (or wrong build). Check <script> includes.');
-
-        return { jsPDF, svg2pdf };
-    }
-
-    function parseSizeToPt(value){
-        if (!value) return NaN;
-        const m = String(value).trim().match(/^([0-9]*\.?[0-9]+)\s*(px|pt|mm|cm|in)?$/i);
-        if (!m) return NaN;
-        const num = parseFloat(m[1]);
-        const unit = (m[2] || 'px').toLowerCase();
-        switch(unit){
-            case 'pt': return num;
-            case 'in': return num * 72;
-            case 'mm': return num * (72/25.4);
-            case 'cm': return num * (72/2.54);
-            case 'px':
-            default:   return num * (72/96);
-        }
-    }
-
-    function inferSvgSizePt(svgEl){
-        const wAttr = svgEl.getAttribute('width');
-        const hAttr = svgEl.getAttribute('height');
-        let wPt = parseSizeToPt(wAttr);
-        let hPt = parseSizeToPt(hAttr);
-        if (!isFinite(wPt) || wPt <= 0 || !isFinite(hPt) || hPt <= 0) {
-            const vb = (svgEl.getAttribute('viewBox') || '').trim().split(/\s+/).map(Number);
-            if (vb.length === 4 && vb.every(v => isFinite(v))) {
-                const vw = Math.max(1, vb[2]);
-                const vh = Math.max(1, vb[3]);
-                wPt = vw * (72/96);
-                hPt = vh * (72/96);
-            }
-        }
-        if (!isFinite(wPt) || !isFinite(hPt) || wPt <= 0 || hPt <= 0) {
-            wPt = 595.28;
-            hPt = 841.89;
-        }
-        return { wPt, hPt };
-    }
-
-    async function exportPdfDirect(){
-        const svgStr = exportCleanSvgString();
-        if (!svgStr) return;
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(svgStr, 'image/svg+xml');
-        const svgEl = doc.documentElement;
-        const { jsPDF, svg2pdf } = await ensurePdfLibs();
-        const { wPt, hPt } = inferSvgSizePt(svgEl);
-        const orient = wPt >= hPt ? 'landscape' : 'portrait';
-        const pdf = new jsPDF({ unit: 'pt', format: [wPt, hPt], orientation: orient });
-        await svg2pdf(svgEl, pdf, { x: 0, y: 0, width: wPt, height: hPt, preserveAspectRatio: 'xMidYMid meet' });
-        pdf.save(`sectie-c-bolts_${tsString()}.pdf`);
-    }
-
-    const exportPdfBtn = document.getElementById('export-pdf');
-    if (exportPdfBtn){
-        exportPdfBtn.addEventListener('click', () => {
-            exportPdfDirect().catch(err => console.error('Export PDF error:', err));
-        });
     }
     const exportSvgBtn = document.getElementById('export-svg');
     if (exportSvgBtn){
@@ -1605,7 +1538,8 @@ function maybeReverseTargets(tgs){
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `sectie-c-bolts_${tsString()}.svg`;
+                const slug = poseSlug(currentPoseId);
+                a.download = `sectie-c-bolts-${slug}.svg`;
                 document.body.appendChild(a);
                 a.click();
                 setTimeout(() => { try { URL.revokeObjectURL(url); a.remove(); } catch(_){ } }, 1000);
