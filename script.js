@@ -12,6 +12,7 @@ const tool = new Tool();
 let bgGroup = null;          // root group (with clip mask + lines subgroup)
 let bgMask = null;           // clip rectangle (we update during tween)
 let bgLinesGroup = null;     // holds the vertical line paths
+let bgFill = null;           // solid white background fill
 let bgTween = null;          // gsap tween handle
 let bgEnabled = false;       // current toggle state
 const BG_COLOR = '#ffffffff';
@@ -26,21 +27,18 @@ function destroyBg(){
     bgGroup = null;
     bgMask = null;
     bgLinesGroup = null;
+    bgFill = null;
 }
 
 function buildBg(){
     destroyBg();
     const Wv = view.bounds.width;
     const Hv = view.bounds.height;
-    // Lines
-    const lines = [];
-    const step = Math.max(16, Math.round(SPACING));
-    for (let x = 0; x <= Wv + 1; x += step){
-        const p = new Path({ segments: [ [x, 0], [x, Hv] ], strokeColor: BG_COLOR, strokeWidth: BG_WIDTH, strokeCap: 'butt' });
-        p.applyMatrix = true;
-        lines.push(p);
-    }
-    bgLinesGroup = new paper.Group({ children: lines });
+    // No lines anymore — only a solid white fill
+    bgLinesGroup = null;
+    // Solid white background fill
+    bgFill = new Path.Rectangle(new paper.Rectangle(0, 0, Wv, Hv));
+    bgFill.fillColor = '#ffffff';
     // Clip mask (start hidden at right edge)
     const rect = new paper.Rectangle(Wv, 0, 0.0001, Hv);
     bgMask = new Path.Rectangle(rect);
@@ -48,13 +46,13 @@ function buildBg(){
     // Root group with mask as first child
     bgGroup = new paper.Group();
     bgGroup.addChild(bgMask);
-    bgGroup.addChild(bgLinesGroup);
+    bgGroup.addChild(bgFill);
     try { bgGroup.sendToBack(); } catch(_){}
     bgGroup.visible = false;
 }
 
 function applyBgMaskProgress(p, mode){
-    if (!bgGroup || !bgLinesGroup) return;
+    if (!bgGroup) return;
     const Wv = view.bounds.width;
     const Hv = view.bounds.height;
     const clamped = Math.max(0, Math.min(1, p||0));
@@ -115,6 +113,9 @@ function setBgEnabled(on){
     });
 }
 
+// Enable white background by default on load
+try { setBgEnabled(true); } catch(_){}
+
 // ----------------- Import multiple bolts as Symbols (from /src) -----------------
 const BOLT_FILES = ['S.svg','E.svg','C.svg','T.svg','I.svg','E.svg','-.svg','C-inverted.svg'].map(f => `./src/${f}`);
 const symbols = [];
@@ -140,8 +141,8 @@ function setTargetFps(fps){
 }
 // Initialize GSAP ticker fps once
 try { if (window.gsap && gsap.ticker && typeof gsap.ticker.fps === 'function') gsap.ticker.fps(TARGET_FPS); } catch(_){ }
-const END_JITTER_MAX_DEG = 10; // rotation
-const END_POS_JITTER_MAX_PX = 5; // positie
+const END_JITTER_MAX_DEG = 7; // rotation
+const END_POS_JITTER_MAX_PX = 3; // positie
 
 // Mid-animation rotation (driven by jitter slider): ramp in, then click off
 const MIDJIT_ENABLE   = true;   // master toggle
@@ -854,8 +855,10 @@ function applyPose() {
     }
     function poseArcUp(){
         const baseR = Math.min(W, H) * 0.28 * SCALE;
-        const rx = baseR * 1.4;
-        const ry = baseR * 0.9;
+        // Make arc a bit narrower and positioned slightly higher
+        const rx = baseR * 1.3;
+        const ry = baseR * 1;
+        const yShift = -baseR * 0.3; // move arc further upward
         const startAngle = 200;
         const endAngle = -20;
 
@@ -864,7 +867,7 @@ function applyPose() {
         for (let i = 0; i <= steps; i++) {
             const t = i / steps;
             const a = (startAngle + (endAngle - startAngle) * t) * Math.PI / 180;
-            p.add(new Point(Math.cos(a) * rx, Math.sin(a) * ry));
+            p.add(new Point(Math.cos(a) * rx, Math.sin(a) * ry + yShift));
         }
         p.smooth({ type: 'continuous' });
 
@@ -874,8 +877,10 @@ function applyPose() {
     }
     function poseArcDown(){
         const baseR = Math.min(W, H) * 0.28 * SCALE;
-        const rx = baseR * 1.4;
-        const ry = baseR * -0.9;
+        // Make arc a bit narrower and positioned slightly lower
+        const rx = baseR * 1.3;
+        const ry = baseR * -1;
+        const yShift = baseR * 0.3; // move arc downward
         const startAngle = 200;
         const endAngle = -20;
 
@@ -884,7 +889,7 @@ function applyPose() {
         for (let i = 0; i <= steps; i++) {
             const t = i / steps;
             const a = (startAngle + (endAngle - startAngle) * t) * Math.PI / 180;
-            p.add(new Point(Math.cos(a) * rx, Math.sin(a) * ry));
+            p.add(new Point(Math.cos(a) * rx, Math.sin(a) * ry + yShift));
         }
         p.smooth({ type: 'continuous' });
 
@@ -904,7 +909,7 @@ function applyPose() {
     }
     function poseArrowRight(){
         const halfH = Math.min(W, H) * 0.33 * SCALE; // vertical half-height
-        const halfW = halfH * 0.6;                    // narrower horizontal half-width
+        const halfW = halfH * 0.7;                  // slightly wider horizontal half-width
 
         // Make the tip thicker by adding a short flat segment at the apex
         const tipW = SPACING * 2.0; // adjust for wider/narrower tip
@@ -1210,10 +1215,11 @@ function maybeReverseTargets(tgs){
                 }
                 return slots;
             }
-            case 3: { // arc up
+            case 3: { // arc up (match poseArcUp)
                 const baseR = Math.min(W, H) * 0.28 * SCALE;
-                const rx = baseR * 1.4;
-                const ry = baseR * 0.9;
+                const rx = baseR * 1.3;
+                const ry = baseR * 1.0;
+                const yShift = -baseR * 0.3; // upward shift
                 const startAngle = 200;
                 const endAngle = -20;
                 const p = new Path({ strokeColor: null });
@@ -1221,17 +1227,18 @@ function maybeReverseTargets(tgs){
                 for (let i = 0; i <= steps; i++){
                     const t = i/steps;
                     const ang = (startAngle + (endAngle - startAngle)*t) * Math.PI/180;
-                    p.add(new Point(Math.cos(ang)*rx, Math.sin(ang)*ry));
+                    p.add(new Point(Math.cos(ang)*rx, Math.sin(ang)*ry + yShift));
                 }
                 p.smooth({ type: 'continuous' });
                 const slots = distributeOnPaths([p], N, 'upright');
                 p.remove();
                 return slots;
             }
-            case 4: { // arc down
+            case 4: { // arc down (match poseArcDown)
                 const baseR = Math.min(W, H) * 0.28 * SCALE;
-                const rx = baseR * 1.4;
-                const ry = baseR * -0.9;
+                const rx = baseR * 1.3;
+                const ry = baseR * -1.0;
+                const yShift = baseR * 0.3; // downward shift
                 const startAngle = 200;
                 const endAngle = -20;
                 const p = new Path({ strokeColor: null });
@@ -1239,7 +1246,7 @@ function maybeReverseTargets(tgs){
                 for (let i = 0; i <= steps; i++){
                     const t = i/steps;
                     const ang = (startAngle + (endAngle - startAngle)*t) * Math.PI/180;
-                    p.add(new Point(Math.cos(ang)*rx, Math.sin(ang)*ry));
+                    p.add(new Point(Math.cos(ang)*rx, Math.sin(ang)*ry + yShift));
                 }
                 p.smooth({ type: 'continuous' });
                 const slots = distributeOnPaths([p], N, 'upright');
@@ -1256,9 +1263,9 @@ function maybeReverseTargets(tgs){
                 p.remove();
                 return slots;
             }
-            case 6: { // arrow
+            case 6: { // arrow (slightly wider)
                 const halfH = Math.min(W, H) * 0.33 * SCALE;
-                const halfW = halfH * 0.6;
+                const halfW = halfH * 0.75;
                 const tipW = SPACING * 2.0;
                 const basePts = [
                     [-halfW, -halfH],
