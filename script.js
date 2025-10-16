@@ -856,7 +856,7 @@ function applyPose() {
     function poseArcUp(){
         const baseR = Math.min(W, H) * 0.28 * SCALE;
         // Make arc a bit narrower and positioned slightly higher
-        const rx = baseR * 1.3;
+        const rx = baseR * 1.3;   // was 1.4
         const ry = baseR * 1;
         const yShift = -baseR * 0.3; // move arc further upward
         const startAngle = 200;
@@ -878,7 +878,7 @@ function applyPose() {
     function poseArcDown(){
         const baseR = Math.min(W, H) * 0.28 * SCALE;
         // Make arc a bit narrower and positioned slightly lower
-        const rx = baseR * 1.3;
+        const rx = baseR * 1.3;   // was 1.4
         const ry = baseR * -1;
         const yShift = baseR * 0.3; // move arc downward
         const startAngle = 200;
@@ -1219,11 +1219,11 @@ function maybeReverseTargets(tgs){
                 const baseR = Math.min(W, H) * 0.28 * SCALE;
                 const rx = baseR * 1.3;
                 const ry = baseR * 1.0;
-                const yShift = -baseR * 0.3; // upward shift
+                const yShift = -baseR * 0.3;
                 const startAngle = 200;
                 const endAngle = -20;
                 const p = new Path({ strokeColor: null });
-                const steps = 40;
+                const steps = 20;
                 for (let i = 0; i <= steps; i++){
                     const t = i/steps;
                     const ang = (startAngle + (endAngle - startAngle)*t) * Math.PI/180;
@@ -1238,7 +1238,7 @@ function maybeReverseTargets(tgs){
                 const baseR = Math.min(W, H) * 0.28 * SCALE;
                 const rx = baseR * 1.3;
                 const ry = baseR * -1.0;
-                const yShift = baseR * 0.3; // downward shift
+                const yShift = baseR * 0.3;
                 const startAngle = 200;
                 const endAngle = -20;
                 const p = new Path({ strokeColor: null });
