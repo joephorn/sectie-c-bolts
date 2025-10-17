@@ -17,8 +17,6 @@
     <script src="https://unpkg.com/gsap@3.12.5/dist/gsap.min.js"></script>
     <script type="text/javascript" src="https://unpkg.com/acorn"></script>
     <script type="text/javascript" src="https://unpkg.com/paper"></script>
-    <!-- WebM Muxer (for WebCodecs VP9 + alpha) -->
-    <script src="https://cdn.jsdelivr.net/npm/@mux/mux-uploader"></script>
     <!-- JSZip (zip PNG sequence) -->
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 
@@ -46,7 +44,6 @@
       <button class="kbd" id="export-png-seq" title="Exporteer PNG sequence (alpha)">Export PNG seq</button>
       <button class="kbd" id="rec-start-webm">Start WebM</button>
       <button class="kbd" id="rec-start-mp4">Start MP4</button>
-      <button class="kbd" id="rec-start-webm-alpha" title="WebM met alpha (Chrome)">Start WebM α</button>
       <button class="kbd" id="rec-start-dual" title="2× WebM (color+matte), 2K vierkant">Start Color+Matte</button>
       <button class="kbd" id="rec-stop" disabled>Stop & download</button>
     </div>
@@ -59,7 +56,6 @@
         // UI
         const btnStartWebM = document.getElementById('rec-start-webm');
         const btnStartMP4  = document.getElementById('rec-start-mp4');
-        const btnStartAlpha= document.getElementById('rec-start-webm-alpha');
         const btnStartDual = document.getElementById('rec-start-dual');
         const btnPngSeq    = document.getElementById('export-png-seq');
         const btnStop  = document.getElementById('rec-stop');
@@ -79,61 +75,8 @@
         let mediaRecorder = null;
         let chunks = [];
         let stream = null;
-        // Alpha recorder state (WebCodecs + WebM Muxer)
-        let alphaState = { running:false, cancel:null };
         // Dual-pass (color+matte) state
         let dualState = { running:false, cancel:null };
-
-        // --- Helpers to detect/load WebM Muxer ---
-        function _resolveWebMMuxerGlobal(){
-            try {
-                if (window.WebMMuxer) return window.WebMMuxer;
-                if (window.webmMuxer) return window.webmMuxer;
-                // some UMD builds attach under default
-                if (window.WebMMuxer && window.WebMMuxer.default) return window.WebMMuxer.default;
-            } catch(_) {}
-            return null;
-        }
-        function _loadScriptOnce(src){
-            return new Promise((resolve, reject) => {
-                const s = document.createElement('script');
-                s.src = src; s.async = true; s.crossOrigin = 'anonymous';
-                s.onload = () => resolve();
-                s.onerror = () => reject(new Error('load failed: '+src));
-                document.head.appendChild(s);
-            });
-        }
-        async function ensureWebMMuxer(){
-            let g = _resolveWebMMuxerGlobal();
-            if (g) return g;
-            // Try local vendored copies if present
-            try { await _loadScriptOnce('./lib/webm-muxer.min.js'); } catch(_) {}
-            g = _resolveWebMMuxerGlobal();
-            if (g) return g;
-            try { await _loadScriptOnce('./vendor/webm-muxer.min.js'); } catch(_) {}
-            g = _resolveWebMMuxerGlobal();
-            if (g) return g;
-            try { await _loadScriptOnce('https://cdn.jsdelivr.net/npm/webm-muxer@latest/dist/webm-muxer.min.js'); } catch(_) {}
-            g = _resolveWebMMuxerGlobal();
-            if (g) return g;
-            try { await _loadScriptOnce('https://unpkg.com/webm-muxer@latest/dist/webm-muxer.min.js'); } catch(_) {}
-            g = _resolveWebMMuxerGlobal();
-            if (g) return g;
-            throw new Error('WebM Muxer script niet beschikbaar');
-        }
-
-        function alphaSupported(){
-            try { return ('VideoEncoder' in window); } catch(_) { return false; }
-        }
-        // Initialize alpha button state (non-blocking: keep clickable and show hint)
-        (function initAlphaBtn(){
-            if (!btnStartAlpha) return;
-            if (!alphaSupported()){
-                btnStartAlpha.title = 'WebM α vereist Chrome + WebCodecs (HTTPS/localhost). Klik toont uitleg.';
-            } else {
-                btnStartAlpha.title = 'Start WebM met alpha (Chrome, VP9)';
-            }
-        })();
 
         function pickMimeType(list) {
             for (const t of list) {
@@ -147,11 +90,6 @@
             const pad = n => String(n).padStart(2,'0');
             const e = (ext || 'webm').replace(/^\./,'');
             return `recording_${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}.${e}`;
-        }
-        function filenameAlphaWebm(){
-            const d = new Date();
-            const pad = n => String(n).padStart(2,'0');
-            return `sectie-c_alpha_${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}.webm`;
         }
         function filenameDual(kind){
             const d = new Date();
@@ -181,7 +119,6 @@
                 mediaRecorder.onstart = () => {
                     if (btnStartWebM) btnStartWebM.disabled = true;
                     if (btnStartMP4)  btnStartMP4.disabled  = true;
-                    if (btnStartAlpha) btnStartAlpha.disabled = true;
                     if (btnPngSeq) btnPngSeq.disabled = true;
                     btnStop.disabled = false;
                     // highlight active start button
@@ -196,7 +133,6 @@
                 mediaRecorder.onstop = () => {
                     if (btnStartWebM) btnStartWebM.disabled = false;
                     if (btnStartMP4)  btnStartMP4.disabled  = false;
-                    if (btnStartAlpha) btnStartAlpha.disabled = false;
                     if (btnPngSeq) btnPngSeq.disabled = false;
                     btnStop.disabled = true;
                     // clear active highlight
@@ -233,129 +169,6 @@
 
         if (btnStartWebM) btnStartWebM.addEventListener('click', () => startRecording(WEBM_TYPES, 'webm'));
         if (btnStartMP4)  btnStartMP4.addEventListener('click', () => startRecording(MP4_TYPES, 'mp4'));
-        if (btnStartDual) btnStartDual.addEventListener('click', startDualRecording2k);
-
-        // --- Start WebM (alpha) via WebCodecs + WebM Muxer ---
-        async function startAlphaRecording(){
-            try {
-                if (!('VideoEncoder' in window)) { alert('WebCodecs niet beschikbaar. Probeer Chrome.'); return; }
-                let WebMMuxerGlobal = null;
-                try { WebMMuxerGlobal = await ensureWebMMuxer(); } catch(e) { console.warn(e); alert('WebM Muxer script niet geladen (CDN). Gebruik PNG seq of probeer opnieuw.'); return; }
-                // Schaal broncanvas (niet vierkant) grofweg naar ~2K voor kwaliteit
-                const OUT_SIZE = 2048; // ongeveer 2K vierkant
-                window.dispatchEvent(new CustomEvent('recorder:start', { detail: { targetW: OUT_SIZE, targetH: OUT_SIZE, contentScale: 1 } }));
-                const prevBg = (typeof window._sc_getBgEnabled === 'function') ? !!window._sc_getBgEnabled() : null;
-                try { if (typeof window._sc_setBgEnabled === 'function') window._sc_setBgEnabled(false); } catch(_){}
-                // Bouw een vierkant offscreen canvas (met alpha) en schaal bron erin met behoud aspect
-                const outW = OUT_SIZE, outH = OUT_SIZE;
-                const off = document.createElement('canvas');
-                off.width = outW; off.height = outH;
-                const octx = off.getContext('2d', { alpha: true });
-
-                const w = canvas.width, h = canvas.height;
-                const target = new WebMMuxerGlobal.ArrayBufferTarget();
-                const muxer = new WebMMuxerGlobal.Muxer({
-                    target,
-                    video: { codec: 'V_VP9', width: outW, height: outH, frameRate: FPS, alpha: true }
-                });
-                const encoder = new VideoEncoder({
-                    output: (chunk, meta) => { try { muxer.addVideoChunk(chunk, meta); } catch(e){ console.error('mux add error', e); } },
-                    error: (e) => console.error('Encoder error:', e)
-                });
-                encoder.configure({
-                    codec: 'vp09.00.10.08',
-                    width: outW,
-                    height: outH,
-                    bitrate: 12_000_000,
-                    framerate: FPS,
-                    alpha: 'keep',
-                    hardwareAcceleration: 'prefer-hardware',
-                    latencyMode: 'quality'
-                });
-
-                let stopped = false;
-                if (btnStartWebM) btnStartWebM.disabled = true;
-                if (btnStartMP4)  btnStartMP4.disabled  = true;
-                if (btnStartAlpha) btnStartAlpha.disabled = true;
-                if (btnPngSeq) btnPngSeq.disabled = true;
-                btnStop.disabled = false;
-                try {
-                    if (btnStartAlpha){
-                        btnStartAlpha.classList.add('active');
-                        btnStartAlpha.dataset._orig = btnStartAlpha.textContent;
-                        btnStartAlpha.textContent = 'Recording α…';
-                    }
-                } catch(_){}
-
-                const startT = (performance && performance.now) ? performance.now() : Date.now();
-                let frameIndex = 0;
-                const frameDurMs = 1000 / FPS;
-
-                function pump(now){
-                    if (stopped) return;
-                    const elapsed = now - startT;
-                    const wantIdx = Math.floor(elapsed / frameDurMs);
-                    while (frameIndex <= wantIdx) {
-                        const ts_us = Math.round(frameIndex * frameDurMs * 1000);
-                        // Schaal bron naar vierkant doel met transparante letterbox/pillarbox
-                        try {
-                            octx.clearRect(0, 0, outW, outH);
-                            const srcW = canvas.width, srcH = canvas.height;
-                            const scale = Math.min(outW / srcW, outH / srcH);
-                            const dw = Math.round(srcW * scale);
-                            const dh = Math.round(srcH * scale);
-                            const dx = Math.floor((outW - dw) / 2);
-                            const dy = Math.floor((outH - dh) / 2);
-                            octx.drawImage(canvas, 0, 0, srcW, srcH, dx, dy, dw, dh);
-                        } catch(e) { console.error('draw offscreen error', e); }
-                        const frame = new VideoFrame(off, { timestamp: ts_us });
-                        try { encoder.encode(frame); } catch(e) { console.error('encode error', e); }
-                        try { frame.close(); } catch(_){}
-                        frameIndex++;
-                    }
-                    requestAnimationFrame(pump);
-                }
-                const rafId = requestAnimationFrame(pump);
-
-                alphaState.running = true;
-                alphaState.cancel = async () => {
-                    if (stopped) return;
-                    stopped = true;
-                    try { cancelAnimationFrame(rafId); } catch(_){}
-                    try { await encoder.flush(); } catch(_){}
-                    try { encoder.close(); } catch(_){}
-                    let buf;
-                    try { buf = muxer.finalize().buffer; } catch(e){ console.error('finalize error', e); }
-                    const blob = new Blob([buf], { type: 'video/webm;codecs=vp9' });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url; a.download = filenameAlphaWebm();
-                    document.body.appendChild(a); a.click();
-                    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
-
-                    try { window.dispatchEvent(new CustomEvent('recorder:stop')); } catch(_){}
-                    try { if (typeof prevBg === 'boolean' && typeof window._sc_setBgEnabled === 'function') window._sc_setBgEnabled(prevBg); } catch(_){}
-                    if (btnStartWebM) btnStartWebM.disabled = false;
-                    if (btnStartMP4)  btnStartMP4.disabled  = false;
-                    if (btnStartAlpha) btnStartAlpha.disabled = false;
-                    if (btnPngSeq) btnPngSeq.disabled = false;
-                    btnStop.disabled = true;
-                    try {
-                        if (btnStartAlpha){
-                            btnStartAlpha.classList.remove('active');
-                            if (btnStartAlpha.dataset._orig) btnStartAlpha.textContent = btnStartAlpha.dataset._orig;
-                        }
-                    } catch(_){}
-                    alphaState.running = false;
-                    alphaState.cancel = null;
-                };
-            } catch (err) {
-                console.error('Alpha recorder start error:', err);
-                alert('Kon WebM α opname niet starten. Zie console voor details.');
-            }
-        }
-
-        if (btnStartAlpha) btnStartAlpha.addEventListener('click', startAlphaRecording);
 
         // --- Export PNG sequence (alpha) into ZIP ---
         function _dataURLToBlob(dataUrl){
@@ -383,7 +196,7 @@
                 btnStop && (btnStop.disabled = true);
                 btnStartWebM && (btnStartWebM.disabled = true);
                 btnStartMP4 && (btnStartMP4.disabled = true);
-                btnStartAlpha && (btnStartAlpha.disabled = true);
+                
 
                 if (do4k) window.dispatchEvent(new CustomEvent('recorder:start', { detail: { targetW: 4096, targetH: 4096, contentScale: 1 } }));
                 const prevBg = (typeof window._sc_getBgEnabled === 'function') ? !!window._sc_getBgEnabled() : null;
@@ -431,7 +244,7 @@
                 btnStop && (btnStop.disabled = true);
                 btnStartWebM && (btnStartWebM.disabled = false);
                 btnStartMP4 && (btnStartMP4.disabled = false);
-                btnStartAlpha && (btnStartAlpha.disabled = false);
+                
             }
         }
 
@@ -474,7 +287,7 @@
                 // Prepare UI
                 if (btnStartWebM) btnStartWebM.disabled = true;
                 if (btnStartMP4)  btnStartMP4.disabled  = true;
-                if (btnStartAlpha) btnStartAlpha.disabled = true;
+                
                 if (btnPngSeq) btnPngSeq.disabled = true;
                 if (btnStartDual) btnStartDual.disabled = true, btnStartDual.classList.add('active');
                 btnStop.disabled = false;
@@ -539,7 +352,7 @@
                     try { if (typeof hadBg === 'boolean' && typeof window._sc_setBgEnabled === 'function') window._sc_setBgEnabled(hadBg); } catch(_){}
                     if (btnStartWebM) btnStartWebM.disabled = false;
                     if (btnStartMP4)  btnStartMP4.disabled  = false;
-                    if (btnStartAlpha) btnStartAlpha.disabled = false;
+                    
                     if (btnPngSeq) btnPngSeq.disabled = false;
                     if (btnStartDual) { btnStartDual.disabled = false; btnStartDual.classList.remove('active'); }
                     btnStop.disabled = true;
@@ -558,10 +371,7 @@
                 mediaRecorder.stop();
                 return;
             }
-            if (alphaState && alphaState.running && typeof alphaState.cancel === 'function') {
-                alphaState.cancel();
-                return;
-            }
+            
             if (dualState && dualState.running && typeof dualState.cancel === 'function') {
                 dualState.cancel();
                 return;

@@ -11,12 +11,9 @@ const tool = new Tool();
 // ----------------- Background Lines -----------------
 let bgGroup = null;          // root group (with clip mask + lines subgroup)
 let bgMask = null;           // clip rectangle (we update during tween)
-let bgLinesGroup = null;     // holds the vertical line paths
 let bgFill = null;           // solid white background fill
 let bgTween = null;          // gsap tween handle
 let bgEnabled = false;       // current toggle state
-const BG_COLOR = '#ffffffff';
-const BG_WIDTH = 1;          // px stroke width
 const BG_EASE = 'power2.inOut';
 const BG_DUR = 0.6;          // seconds
 
