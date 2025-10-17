@@ -17,8 +17,11 @@
     <script src="https://unpkg.com/gsap@3.12.5/dist/gsap.min.js"></script>
     <script type="text/javascript" src="https://unpkg.com/acorn"></script>
     <script type="text/javascript" src="https://unpkg.com/paper"></script>
+    <!-- WebM Muxer (for WebCodecs VP9 + alpha) -->
+    <script src="https://cdn.jsdelivr.net/npm/@mux/mux-uploader"></script>
+    <!-- JSZip (zip PNG sequence) -->
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 
-    
 </head>
 <body>
     <div id="shortcuts" role="navigation" aria-label="Shortcuts">
@@ -40,8 +43,11 @@
 
     <div id="recorder-ui shortcuts" style="position:fixed; left:30px; top:80px; z-index:9999; display:flex; gap:8px;">
       <span class="kbd" id="export-svg" title="Exporteer als SVG">Export SVG</span>
+      <button class="kbd" id="export-png-seq" title="Exporteer PNG sequence (alpha)">Export PNG seq</button>
       <button class="kbd" id="rec-start-webm">Start WebM</button>
       <button class="kbd" id="rec-start-mp4">Start MP4</button>
+      <button class="kbd" id="rec-start-webm-alpha" title="WebM met alpha (Chrome)">Start WebM α</button>
+      <button class="kbd" id="rec-start-dual" title="2× WebM (color+matte), 2K vierkant">Start Color+Matte</button>
       <button class="kbd" id="rec-stop" disabled>Stop & download</button>
     </div>
 
@@ -53,6 +59,9 @@
         // UI
         const btnStartWebM = document.getElementById('rec-start-webm');
         const btnStartMP4  = document.getElementById('rec-start-mp4');
+        const btnStartAlpha= document.getElementById('rec-start-webm-alpha');
+        const btnStartDual = document.getElementById('rec-start-dual');
+        const btnPngSeq    = document.getElementById('export-png-seq');
         const btnStop  = document.getElementById('rec-stop');
 
         // Settings
@@ -70,6 +79,61 @@
         let mediaRecorder = null;
         let chunks = [];
         let stream = null;
+        // Alpha recorder state (WebCodecs + WebM Muxer)
+        let alphaState = { running:false, cancel:null };
+        // Dual-pass (color+matte) state
+        let dualState = { running:false, cancel:null };
+
+        // --- Helpers to detect/load WebM Muxer ---
+        function _resolveWebMMuxerGlobal(){
+            try {
+                if (window.WebMMuxer) return window.WebMMuxer;
+                if (window.webmMuxer) return window.webmMuxer;
+                // some UMD builds attach under default
+                if (window.WebMMuxer && window.WebMMuxer.default) return window.WebMMuxer.default;
+            } catch(_) {}
+            return null;
+        }
+        function _loadScriptOnce(src){
+            return new Promise((resolve, reject) => {
+                const s = document.createElement('script');
+                s.src = src; s.async = true; s.crossOrigin = 'anonymous';
+                s.onload = () => resolve();
+                s.onerror = () => reject(new Error('load failed: '+src));
+                document.head.appendChild(s);
+            });
+        }
+        async function ensureWebMMuxer(){
+            let g = _resolveWebMMuxerGlobal();
+            if (g) return g;
+            // Try local vendored copies if present
+            try { await _loadScriptOnce('./lib/webm-muxer.min.js'); } catch(_) {}
+            g = _resolveWebMMuxerGlobal();
+            if (g) return g;
+            try { await _loadScriptOnce('./vendor/webm-muxer.min.js'); } catch(_) {}
+            g = _resolveWebMMuxerGlobal();
+            if (g) return g;
+            try { await _loadScriptOnce('https://cdn.jsdelivr.net/npm/webm-muxer@latest/dist/webm-muxer.min.js'); } catch(_) {}
+            g = _resolveWebMMuxerGlobal();
+            if (g) return g;
+            try { await _loadScriptOnce('https://unpkg.com/webm-muxer@latest/dist/webm-muxer.min.js'); } catch(_) {}
+            g = _resolveWebMMuxerGlobal();
+            if (g) return g;
+            throw new Error('WebM Muxer script niet beschikbaar');
+        }
+
+        function alphaSupported(){
+            try { return ('VideoEncoder' in window); } catch(_) { return false; }
+        }
+        // Initialize alpha button state (non-blocking: keep clickable and show hint)
+        (function initAlphaBtn(){
+            if (!btnStartAlpha) return;
+            if (!alphaSupported()){
+                btnStartAlpha.title = 'WebM α vereist Chrome + WebCodecs (HTTPS/localhost). Klik toont uitleg.';
+            } else {
+                btnStartAlpha.title = 'Start WebM met alpha (Chrome, VP9)';
+            }
+        })();
 
         function pickMimeType(list) {
             for (const t of list) {
@@ -83,6 +147,17 @@
             const pad = n => String(n).padStart(2,'0');
             const e = (ext || 'webm').replace(/^\./,'');
             return `recording_${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}.${e}`;
+        }
+        function filenameAlphaWebm(){
+            const d = new Date();
+            const pad = n => String(n).padStart(2,'0');
+            return `sectie-c_alpha_${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}.webm`;
+        }
+        function filenameDual(kind){
+            const d = new Date();
+            const pad = n => String(n).padStart(2,'0');
+            const k = kind || 'color';
+            return `sectie-c_${k}_${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}.webm`;
         }
 
         function startRecording(preferredList, ext){
@@ -106,6 +181,8 @@
                 mediaRecorder.onstart = () => {
                     if (btnStartWebM) btnStartWebM.disabled = true;
                     if (btnStartMP4)  btnStartMP4.disabled  = true;
+                    if (btnStartAlpha) btnStartAlpha.disabled = true;
+                    if (btnPngSeq) btnPngSeq.disabled = true;
                     btnStop.disabled = false;
                     // highlight active start button
                     try {
@@ -119,6 +196,8 @@
                 mediaRecorder.onstop = () => {
                     if (btnStartWebM) btnStartWebM.disabled = false;
                     if (btnStartMP4)  btnStartMP4.disabled  = false;
+                    if (btnStartAlpha) btnStartAlpha.disabled = false;
+                    if (btnPngSeq) btnPngSeq.disabled = false;
                     btnStop.disabled = true;
                     // clear active highlight
                     try {
@@ -154,10 +233,338 @@
 
         if (btnStartWebM) btnStartWebM.addEventListener('click', () => startRecording(WEBM_TYPES, 'webm'));
         if (btnStartMP4)  btnStartMP4.addEventListener('click', () => startRecording(MP4_TYPES, 'mp4'));
+        if (btnStartDual) btnStartDual.addEventListener('click', startDualRecording2k);
+
+        // --- Start WebM (alpha) via WebCodecs + WebM Muxer ---
+        async function startAlphaRecording(){
+            try {
+                if (!('VideoEncoder' in window)) { alert('WebCodecs niet beschikbaar. Probeer Chrome.'); return; }
+                let WebMMuxerGlobal = null;
+                try { WebMMuxerGlobal = await ensureWebMMuxer(); } catch(e) { console.warn(e); alert('WebM Muxer script niet geladen (CDN). Gebruik PNG seq of probeer opnieuw.'); return; }
+                // Schaal broncanvas (niet vierkant) grofweg naar ~2K voor kwaliteit
+                const OUT_SIZE = 2048; // ongeveer 2K vierkant
+                window.dispatchEvent(new CustomEvent('recorder:start', { detail: { targetW: OUT_SIZE, targetH: OUT_SIZE, contentScale: 1 } }));
+                const prevBg = (typeof window._sc_getBgEnabled === 'function') ? !!window._sc_getBgEnabled() : null;
+                try { if (typeof window._sc_setBgEnabled === 'function') window._sc_setBgEnabled(false); } catch(_){}
+                // Bouw een vierkant offscreen canvas (met alpha) en schaal bron erin met behoud aspect
+                const outW = OUT_SIZE, outH = OUT_SIZE;
+                const off = document.createElement('canvas');
+                off.width = outW; off.height = outH;
+                const octx = off.getContext('2d', { alpha: true });
+
+                const w = canvas.width, h = canvas.height;
+                const target = new WebMMuxerGlobal.ArrayBufferTarget();
+                const muxer = new WebMMuxerGlobal.Muxer({
+                    target,
+                    video: { codec: 'V_VP9', width: outW, height: outH, frameRate: FPS, alpha: true }
+                });
+                const encoder = new VideoEncoder({
+                    output: (chunk, meta) => { try { muxer.addVideoChunk(chunk, meta); } catch(e){ console.error('mux add error', e); } },
+                    error: (e) => console.error('Encoder error:', e)
+                });
+                encoder.configure({
+                    codec: 'vp09.00.10.08',
+                    width: outW,
+                    height: outH,
+                    bitrate: 12_000_000,
+                    framerate: FPS,
+                    alpha: 'keep',
+                    hardwareAcceleration: 'prefer-hardware',
+                    latencyMode: 'quality'
+                });
+
+                let stopped = false;
+                if (btnStartWebM) btnStartWebM.disabled = true;
+                if (btnStartMP4)  btnStartMP4.disabled  = true;
+                if (btnStartAlpha) btnStartAlpha.disabled = true;
+                if (btnPngSeq) btnPngSeq.disabled = true;
+                btnStop.disabled = false;
+                try {
+                    if (btnStartAlpha){
+                        btnStartAlpha.classList.add('active');
+                        btnStartAlpha.dataset._orig = btnStartAlpha.textContent;
+                        btnStartAlpha.textContent = 'Recording α…';
+                    }
+                } catch(_){}
+
+                const startT = (performance && performance.now) ? performance.now() : Date.now();
+                let frameIndex = 0;
+                const frameDurMs = 1000 / FPS;
+
+                function pump(now){
+                    if (stopped) return;
+                    const elapsed = now - startT;
+                    const wantIdx = Math.floor(elapsed / frameDurMs);
+                    while (frameIndex <= wantIdx) {
+                        const ts_us = Math.round(frameIndex * frameDurMs * 1000);
+                        // Schaal bron naar vierkant doel met transparante letterbox/pillarbox
+                        try {
+                            octx.clearRect(0, 0, outW, outH);
+                            const srcW = canvas.width, srcH = canvas.height;
+                            const scale = Math.min(outW / srcW, outH / srcH);
+                            const dw = Math.round(srcW * scale);
+                            const dh = Math.round(srcH * scale);
+                            const dx = Math.floor((outW - dw) / 2);
+                            const dy = Math.floor((outH - dh) / 2);
+                            octx.drawImage(canvas, 0, 0, srcW, srcH, dx, dy, dw, dh);
+                        } catch(e) { console.error('draw offscreen error', e); }
+                        const frame = new VideoFrame(off, { timestamp: ts_us });
+                        try { encoder.encode(frame); } catch(e) { console.error('encode error', e); }
+                        try { frame.close(); } catch(_){}
+                        frameIndex++;
+                    }
+                    requestAnimationFrame(pump);
+                }
+                const rafId = requestAnimationFrame(pump);
+
+                alphaState.running = true;
+                alphaState.cancel = async () => {
+                    if (stopped) return;
+                    stopped = true;
+                    try { cancelAnimationFrame(rafId); } catch(_){}
+                    try { await encoder.flush(); } catch(_){}
+                    try { encoder.close(); } catch(_){}
+                    let buf;
+                    try { buf = muxer.finalize().buffer; } catch(e){ console.error('finalize error', e); }
+                    const blob = new Blob([buf], { type: 'video/webm;codecs=vp9' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url; a.download = filenameAlphaWebm();
+                    document.body.appendChild(a); a.click();
+                    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
+
+                    try { window.dispatchEvent(new CustomEvent('recorder:stop')); } catch(_){}
+                    try { if (typeof prevBg === 'boolean' && typeof window._sc_setBgEnabled === 'function') window._sc_setBgEnabled(prevBg); } catch(_){}
+                    if (btnStartWebM) btnStartWebM.disabled = false;
+                    if (btnStartMP4)  btnStartMP4.disabled  = false;
+                    if (btnStartAlpha) btnStartAlpha.disabled = false;
+                    if (btnPngSeq) btnPngSeq.disabled = false;
+                    btnStop.disabled = true;
+                    try {
+                        if (btnStartAlpha){
+                            btnStartAlpha.classList.remove('active');
+                            if (btnStartAlpha.dataset._orig) btnStartAlpha.textContent = btnStartAlpha.dataset._orig;
+                        }
+                    } catch(_){}
+                    alphaState.running = false;
+                    alphaState.cancel = null;
+                };
+            } catch (err) {
+                console.error('Alpha recorder start error:', err);
+                alert('Kon WebM α opname niet starten. Zie console voor details.');
+            }
+        }
+
+        if (btnStartAlpha) btnStartAlpha.addEventListener('click', startAlphaRecording);
+
+        // --- Export PNG sequence (alpha) into ZIP ---
+        function _dataURLToBlob(dataUrl){
+            const parts = dataUrl.split(',');
+            const mime = parts[0].match(/:(.*?);/)[1] || 'image/png';
+            const bin = atob(parts[1]);
+            const len = bin.length;
+            const arr = new Uint8Array(len);
+            for (let i=0;i<len;i++) arr[i] = bin.charCodeAt(i);
+            return new Blob([arr], { type: mime });
+        }
+
+        async function exportPngSequence(){
+            try {
+                if (typeof JSZip === 'undefined') { console.warn('JSZip niet beschikbaar.'); return; }
+                const fpsStr = prompt('FPS voor export (5–60):', String(FPS));
+                if (fpsStr == null) return;
+                let fps = Math.max(5, Math.min(60, Math.floor(Number(fpsStr)||FPS)));
+                const secStr = prompt('Aantal seconden (1–30):', '3');
+                if (secStr == null) return;
+                let secs = Math.max(1, Math.min(30, Math.floor(Number(secStr)||3)));
+                const do4k = confirm('Opschalen naar ~4K canvas? Dit kan veel geheugen gebruiken. OK = ja, Cancel = nee.');
+
+                btnPngSeq && (btnPngSeq.disabled = true);
+                btnStop && (btnStop.disabled = true);
+                btnStartWebM && (btnStartWebM.disabled = true);
+                btnStartMP4 && (btnStartMP4.disabled = true);
+                btnStartAlpha && (btnStartAlpha.disabled = true);
+
+                if (do4k) window.dispatchEvent(new CustomEvent('recorder:start', { detail: { targetW: 4096, targetH: 4096, contentScale: 1 } }));
+                const prevBg = (typeof window._sc_getBgEnabled === 'function') ? !!window._sc_getBgEnabled() : null;
+                try { if (typeof window._sc_setBgEnabled === 'function') window._sc_setBgEnabled(false); } catch(_){}
+
+                const total = fps * secs;
+                const frameDur = 1000 / fps;
+                const zip = new JSZip();
+                const start = (performance && performance.now) ? performance.now() : Date.now();
+                let nextTs = start;
+                for (let i=0;i<total;i++){
+                    const now = (performance && performance.now) ? performance.now() : Date.now();
+                    const wait = Math.max(0, nextTs - now);
+                    if (wait > 0) await new Promise(r => setTimeout(r, wait));
+                    await new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
+                    const blob = await new Promise(res => {
+                        try {
+                            canvas.toBlob(b => res(b || _dataURLToBlob(canvas.toDataURL('image/png'))), 'image/png');
+                        } catch(_) {
+                            try { res(_dataURLToBlob(canvas.toDataURL('image/png'))); } catch(e){ res(null); }
+                        }
+                    });
+                    if (blob) zip.file(`sectiec_${String(i).padStart(4,'0')}.png`, blob);
+                    nextTs += frameDur;
+                }
+
+                const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+                const url = URL.createObjectURL(zipBlob);
+                const a = document.createElement('a');
+                a.href = url;
+                const d = new Date();
+                const pad = n => String(n).padStart(2,'0');
+                const name = `sectie-c_pngseq_${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}.zip`;
+                a.download = name;
+                document.body.appendChild(a);
+                a.click();
+                setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
+
+                try { window.dispatchEvent(new CustomEvent('recorder:stop')); } catch(_){}
+                try { if (typeof prevBg === 'boolean' && typeof window._sc_setBgEnabled === 'function') window._sc_setBgEnabled(prevBg); } catch(_){}
+            } catch (err) {
+                console.error('PNG sequence export error:', err);
+            } finally {
+                btnPngSeq && (btnPngSeq.disabled = false);
+                btnStop && (btnStop.disabled = true);
+                btnStartWebM && (btnStartWebM.disabled = false);
+                btnStartMP4 && (btnStartMP4.disabled = false);
+                btnStartAlpha && (btnStartAlpha.disabled = false);
+            }
+        }
+
+        if (btnPngSeq) btnPngSeq.addEventListener('click', exportPngSequence);
+
+        // --- Dual WebM (color + matte) at ~2K square using MediaRecorder ---
+        function createCanvas(w, h){ const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
+        function drawLetterboxed(dstCtx, srcCanvas, outW, outH, bgColor){
+            dstCtx.clearRect(0,0,outW,outH);
+            const sw = srcCanvas.width, sh = srcCanvas.height;
+            const scale = Math.min(outW/sw, outH/sh);
+            const dw = Math.round(sw*scale), dh = Math.round(sh*scale);
+            const dx = Math.floor((outW - dw)/2), dy = Math.floor((outH - dh)/2);
+            dstCtx.drawImage(srcCanvas, 0, 0, sw, sh, dx, dy, dw, dh);
+            if (bgColor){
+                dstCtx.save();
+                dstCtx.globalCompositeOperation = 'destination-over';
+                dstCtx.fillStyle = bgColor; // typically black
+                dstCtx.fillRect(0,0,outW,outH);
+                dstCtx.restore();
+            }
+            return {dx,dy,dw,dh};
+        }
+
+        function makeMatte(dstCtx, outW, outH){
+            // Replace RGB with white where alpha>0, then put black background behind
+            dstCtx.save();
+            dstCtx.globalCompositeOperation = 'source-in';
+            dstCtx.fillStyle = '#ffffff';
+            dstCtx.fillRect(0,0,outW,outH);
+            dstCtx.globalCompositeOperation = 'destination-over';
+            dstCtx.fillStyle = '#000000';
+            dstCtx.fillRect(0,0,outW,outH);
+            dstCtx.restore();
+        }
+
+        function startDualRecording2k(){
+            try {
+                const OUT = 2048; // 2K vierkant
+                // Prepare UI
+                if (btnStartWebM) btnStartWebM.disabled = true;
+                if (btnStartMP4)  btnStartMP4.disabled  = true;
+                if (btnStartAlpha) btnStartAlpha.disabled = true;
+                if (btnPngSeq) btnPngSeq.disabled = true;
+                if (btnStartDual) btnStartDual.disabled = true, btnStartDual.classList.add('active');
+                btnStop.disabled = false;
+
+                // Upscale buffers moderately so source has enough detail
+                window.dispatchEvent(new CustomEvent('recorder:start', { detail: { targetW: OUT, targetH: OUT, contentScale: 1 } }));
+                const hadBg = (typeof window._sc_getBgEnabled === 'function') ? !!window._sc_getBgEnabled() : null;
+                try { if (typeof window._sc_setBgEnabled === 'function') window._sc_setBgEnabled(false); } catch(_){}
+
+                // Offscreen canvases
+                const cColor = createCanvas(OUT, OUT);
+                const xColor = cColor.getContext('2d', { alpha: true });
+                const cMatte = createCanvas(OUT, OUT);
+                const xMatte = cMatte.getContext('2d', { alpha: true });
+
+                // Streams and recorders
+                const sColor = cColor.captureStream(30);
+                const sMatte = cMatte.captureStream(30);
+                const chunksColor = [], chunksMatte = [];
+                const opts = { mimeType: (MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm'), videoBitsPerSecond: 12_000_000 };
+                const recColor = new MediaRecorder(sColor, opts);
+                const recMatte = new MediaRecorder(sMatte, opts);
+                recColor.ondataavailable = e => { if (e.data && e.data.size) chunksColor.push(e.data); };
+                recMatte.ondataavailable = e => { if (e.data && e.data.size) chunksMatte.push(e.data); };
+
+                // Pump frames into offscreen targets
+                let running = true;
+                function tick(){
+                    if (!running) return;
+                    drawLetterboxed(xColor, canvas, OUT, OUT, '#000');
+                    drawLetterboxed(xMatte, canvas, OUT, OUT, null);
+                    makeMatte(xMatte, OUT, OUT);
+                    requestAnimationFrame(tick);
+                }
+                requestAnimationFrame(tick);
+
+                recColor.start(250);
+                recMatte.start(250);
+                dualState.running = true;
+                dualState.cancel = () => {
+                    if (!running) return;
+                    running = false;
+                    try { recColor.stop(); } catch(_){}
+                    try { recMatte.stop(); } catch(_){}
+                };
+
+                // Finalize on both stop
+                let stoppedCount = 0;
+                function maybeFinish(){
+                    stoppedCount++;
+                    if (stoppedCount < 2) return;
+                    // Save files
+                    const blobC = new Blob(chunksColor, { type: opts.mimeType });
+                    const blobM = new Blob(chunksMatte, { type: opts.mimeType });
+                    const urlC = URL.createObjectURL(blobC);
+                    const urlM = URL.createObjectURL(blobM);
+                    const a1 = document.createElement('a'); a1.href = urlC; a1.download = filenameDual('color'); document.body.appendChild(a1); a1.click(); setTimeout(() => { URL.revokeObjectURL(urlC); a1.remove(); }, 1000);
+                    const a2 = document.createElement('a'); a2.href = urlM; a2.download = filenameDual('matte'); document.body.appendChild(a2); a2.click(); setTimeout(() => { URL.revokeObjectURL(urlM); a2.remove(); }, 1000);
+
+                    // Restore UI/state
+                    try { window.dispatchEvent(new CustomEvent('recorder:stop')); } catch(_){}
+                    try { if (typeof hadBg === 'boolean' && typeof window._sc_setBgEnabled === 'function') window._sc_setBgEnabled(hadBg); } catch(_){}
+                    if (btnStartWebM) btnStartWebM.disabled = false;
+                    if (btnStartMP4)  btnStartMP4.disabled  = false;
+                    if (btnStartAlpha) btnStartAlpha.disabled = false;
+                    if (btnPngSeq) btnPngSeq.disabled = false;
+                    if (btnStartDual) { btnStartDual.disabled = false; btnStartDual.classList.remove('active'); }
+                    btnStop.disabled = true;
+                    dualState.running = false; dualState.cancel = null;
+                }
+                recColor.onstop = maybeFinish;
+                recMatte.onstop = maybeFinish;
+            } catch (err) {
+                console.error('Dual recorder error:', err);
+                alert('Kon Color+Matte opname niet starten. Zie console.');
+            }
+        }
 
         btnStop.addEventListener('click', () => {
             if (mediaRecorder && mediaRecorder.state === 'recording') {
                 mediaRecorder.stop();
+                return;
+            }
+            if (alphaState && alphaState.running && typeof alphaState.cancel === 'function') {
+                alphaState.cancel();
+                return;
+            }
+            if (dualState && dualState.running && typeof dualState.cancel === 'function') {
+                dualState.cancel();
+                return;
             }
         });
 

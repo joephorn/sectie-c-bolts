@@ -418,6 +418,105 @@ let origCanvasH = canvas.height;
 let origZoom    = view.zoom;
 let origCenter  = view.center.clone();
 let origViewSize = view.viewSize.clone();
+// Remember original CSS size overrides
+let origStyleW = '';
+let origStyleH = '';
+
+// --- Alpha-capable MediaRecorder (transparent background) ---
+let alphaRecorder = null;
+let alphaChunks = [];
+let alphaMime = '';
+let _preRecordBgEnabled = null;
+
+function pickAlphaMime(){
+  const candidates = [
+    'video/webm;codecs=vp8',          // VP8 supports alpha in Chrome
+    'video/webm;codecs=vp9',          // VP9 sometimes OK, fallback
+    'video/webm'                      // generic fallback
+  ];
+  for (const m of candidates){
+    try { if (MediaRecorder.isTypeSupported(m)) return m; } catch(_){}
+  }
+  return '';
+}
+
+function ensureTransparentCanvas(){
+  try { document.body.style.background = 'transparent'; } catch(_){}
+  try { const el = document.getElementById('c'); if (el) el.style.background = 'transparent'; } catch(_){}
+}
+
+function startAlphaRecording(opts={}){
+  if (alphaRecorder && alphaRecorder.state === 'recording') return;
+  const fps   = Math.max(5, Math.min(60, Math.floor(opts.fps || TARGET_FPS || 30)));
+  const fname = String(opts.fileName || 'sectie-c-bolts-alpha');
+  const upscale = Number(opts.contentScale) || 1; // optional content scale
+  const hiW = Number(opts.targetW) || null;
+  const hiH = Number(opts.targetH) || null;
+
+  // Force transparent visuals: disable white bg overlay and set CSS transparent
+  _preRecordBgEnabled = bgEnabled;
+  try { setBgEnabled(false); } catch(_){}
+  ensureTransparentCanvas();
+
+  // Optionally bump backing store and content scale for crisp export
+  if (hiW && hiH){
+    window.dispatchEvent(new CustomEvent('recorder:start', { detail: { targetW: hiW, targetH: hiH, contentScale: upscale } }));
+  }
+
+  const canvas = document.getElementById('c');
+  if (!canvas || !canvas.captureStream){ console.error('Canvas captureStream not available'); return; }
+
+  // Prefer an alpha-capable mime
+  alphaMime = pickAlphaMime();
+  const stream = canvas.captureStream(fps);
+  try {
+    alphaRecorder = new MediaRecorder(stream, alphaMime ? { mimeType: alphaMime } : {});
+  } catch (err){
+    console.error('MediaRecorder init failed, retrying without mime', err);
+    alphaRecorder = new MediaRecorder(stream);
+  }
+
+  alphaChunks = [];
+  alphaRecorder.ondataavailable = (e) => { if (e && e.data && e.data.size) alphaChunks.push(e.data); };
+  alphaRecorder.onstop = () => {
+    try {
+      const blob = new Blob(alphaChunks, { type: alphaMime || 'video/webm' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const ext = (alphaMime && alphaMime.includes('webm')) ? 'webm' : 'webm';
+      a.download = `${fname}-${tsString()}.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { try { URL.revokeObjectURL(url); a.remove(); } catch(_){} }, 1000);
+    } finally {
+      // restore canvas sizing and background state
+      window.dispatchEvent(new Event('recorder:stop'));
+      if (_preRecordBgEnabled != null) { try { setBgEnabled(_preRecordBgEnabled); } catch(_){} }
+      _preRecordBgEnabled = null;
+    }
+  };
+
+  try { alphaRecorder.start(); } catch(err){ console.error('Recorder start failed', err); return; }
+  console.log('🎥 Alpha recording started', alphaMime || '(default)');
+}
+
+function stopAlphaRecording(){
+  if (alphaRecorder && alphaRecorder.state === 'recording'){
+    try { alphaRecorder.stop(); } catch(_){}
+  }
+}
+
+// Convenience keybinding: Shift+V starts a short alpha capture, Shift+S stops
+window.addEventListener('keydown', (e) => {
+  if (e.shiftKey && (e.key === 'v' || e.key === 'V')){
+    // 4K square backing store, mild content scale for crisp vectors
+    startAlphaRecording({ targetW: 4096, targetH: 4096, contentScale: 1.15, fps: TARGET_FPS, fileName: `sectie-c-bolts-alpha` });
+  }
+  if (e.shiftKey && (e.key === 's' || e.key === 'S')){
+    stopAlphaRecording();
+  }
+});
 
 function setCanvasPixelSize(w, h){
     canvas.width = w;
@@ -445,6 +544,14 @@ function applyRecordSizing(targetW = 4096, targetH = 4096){
 
     // Increase drawing buffer without changing world coordinates
     setCanvasPixelSize(newW, newH);
+    // Lock CSS display size so the canvas doesn't visually blow up
+    // Save original inline styles to restore later
+    try {
+        origStyleW = canvas.style.width;
+        origStyleH = canvas.style.height;
+        canvas.style.width  = cssW + 'px';
+        canvas.style.height = cssH + 'px';
+    } catch(_){}
     view.viewSize = new paper.Size(cssW, cssH);
     view.zoom = origZoom;
     view.center = origCenter;
@@ -460,6 +567,13 @@ function restoreInteractiveSizing(){
     view.viewSize = origViewSize;
     // restore canvas size
     setCanvasPixelSize(origCanvasW, origCanvasH);
+    // Restore original CSS size
+    try {
+        canvas.style.width  = origStyleW || '';
+        canvas.style.height = origStyleH || '';
+        origStyleW = '';
+        origStyleH = '';
+    } catch(_){}
     view.update();
     isRecording = false;
 }
@@ -864,7 +978,7 @@ function applyPose() {
 
         const p = new Path({ strokeColor: null });
         const steps = 20;
-        for (let i = 0; i <= steps; i++) {
+        for (let i = 0; i <= steps; i++) {  
             const t = i / steps;
             const a = (startAngle + (endAngle - startAngle) * t) * Math.PI / 180;
             p.add(new Point(Math.cos(a) * rx, Math.sin(a) * ry + yShift));
