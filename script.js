@@ -1,3 +1,7 @@
+// NAAR MAP GAAN MET color EN matte, dan:
+// ffmpeg -i color.webm -i matte.webm -filter_complex "[0:v][1:v]alphamerge" -c:v prores_ks -profile:v 4444 -pix_fmt yuva444p10le output.mov
+
+
 (function(){
 // ----------------- Setup Paper -----------------
 const canvas = document.getElementById('c');

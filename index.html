@@ -169,6 +169,7 @@
 
         if (btnStartWebM) btnStartWebM.addEventListener('click', () => startRecording(WEBM_TYPES, 'webm'));
         if (btnStartMP4)  btnStartMP4.addEventListener('click', () => startRecording(MP4_TYPES, 'mp4'));
+        if (btnStartDual) btnStartDual.addEventListener('click', startDualRecording2k);
 
         // --- Export PNG sequence (alpha) into ZIP ---
         function _dataURLToBlob(dataUrl){
