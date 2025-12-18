@@ -5,7 +5,7 @@ Design tool voor Sectie-C's logo.
 
 ## Features
 - Wisselen tussen logo configuraties met shortcuts
-- Exporteren naar SVG / PNG sequence / WebM / MP4 / Color + Matte:
+- Exporteren naar SVG / PNG sequence / WebM / MP4 / WebM met alpha:
     1. Open de website met Chrome. Andere browsers kunnen instabiel zijn.
     2. Neem op met 'Start Color+Matte'.
     3. Naar map gaan color.webm en matte.webm. Zorg dat de bestanden de juiste namen hebben.
