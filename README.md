@@ -1,7 +1,7 @@
 # Sectie-C Bolts
 Design tool voor Sectie-C's logo.
 
-[(demo)](https://joephorn.github.io/sectie-c-bolts/)
+[demo](https://joephorn.github.io/sectie-c-bolts/)
 
 ## Features
 - Wisselen tussen logo configuraties met shortcuts
