@@ -10,7 +10,8 @@ Design tool voor Sectie-C's logo.
     2. Ga naar de *Elements* tab.
     3. Zoek het *`<canvas>`* element (in `<html>`/`<body>`.
     4. Verander *width* en *height* naar de gewenste waarde. Deze moeten gelijkwaardig blijven.
-- Exporteren naar SVG / PNG sequence / WebM / MP4 / WebM met alpha:
+- Exporteren naar SVG / PNG sequence / WebM / MP4
+- Exporteren naar WebM met alpha:
     1. Open de website met Chrome. Andere browsers kunnen instabiel zijn.
     2. Neem op met 'Start Color+Matte'.
     3. Naar map gaan color.webm en matte.webm. Zorg dat de bestanden de juiste namen hebben.
