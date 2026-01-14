@@ -5,14 +5,14 @@
     <title>Sectie-C Bolts</title>
     <style>
       :root{ --bar-h: 64px; }
-      html,body{margin:0;height:100%;background:#fff;overflow: hidden;}
+      html,body{margin:0;height:100%;background:#fff;overflow: auto;}
       body{display:flex;flex-direction:column;height:100vh;}
       #shortcuts{height:var(--bar-h);box-sizing:border-box;padding:10px 14px;display:flex;gap:16px;align-items:center;border-bottom:1px solid #e6e6e6;font:14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;}
       .kbd{font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background:#f3f3f3; border:1px solid #ddd; border-bottom-color:#ccc; padding:2px 6px; border-radius:6px; box-shadow:inset 0 -1px 0 rgba(0,0,0,.06);}
       .kbd.active{ background:#16a34a; color:#fff; border-color:#0e7a36; }
       .kbd[disabled]{ opacity:.5; cursor:not-allowed; }
       #shortcuts .item{display:flex;align-items:center;gap:8px;white-space:nowrap;}
-      #c{flex:1 1 auto; width:100%; height:calc(100vh - var(--bar-h)); display:block;}
+      #c{flex:0 0 auto; display:block;}
     </style>
     <script src="https://unpkg.com/gsap@3.12.5/dist/gsap.min.js"></script>
     <script type="text/javascript" src="https://unpkg.com/acorn"></script>
@@ -44,7 +44,7 @@
       <button class="kbd" id="export-png-seq" title="Exporteer PNG sequence (alpha)">Export PNG seq</button>
       <button class="kbd" id="rec-start-webm">Start WebM</button>
       <button class="kbd" id="rec-start-mp4">Start MP4</button>
-      <button class="kbd" id="rec-start-dual" title="2× WebM (color+matte), 2K vierkant">Start Color+Matte</button>
+      <button class="kbd" id="rec-start-dual" title="2× WebM (color+matte), 1080x1080 vierkant">Start Color+Matte</button>
       <button class="kbd" id="rec-stop" disabled>Stop & download</button>
     </div>
 
@@ -102,8 +102,8 @@
             try {
                 const type = pickMimeType(preferredList);
                 if (!type) { console.warn(ext === 'mp4' ? 'MP4 opname niet ondersteund.' : 'Recording niet ondersteund.'); return; }
-                // schaal main canvas-buffers voor opname (max ~4k)
-                window.dispatchEvent(new CustomEvent('recorder:start', { detail: { targetW: 4096, targetH: 4096, contentScale: 1 } }));
+                // schaal main canvas-buffers voor opname (1080x1080)
+                window.dispatchEvent(new CustomEvent('recorder:start', { detail: { targetW: 1080, targetH: 1080, contentScale: 1 } }));
                 // stream exact op canvas-resolutie (afhankelijk van jouw canvas.width/height)
                 stream = canvas.captureStream(FPS);
                 const opts = { mimeType: type };
@@ -169,7 +169,7 @@
 
         if (btnStartWebM) btnStartWebM.addEventListener('click', () => startRecording(WEBM_TYPES, 'webm'));
         if (btnStartMP4)  btnStartMP4.addEventListener('click', () => startRecording(MP4_TYPES, 'mp4'));
-        if (btnStartDual) btnStartDual.addEventListener('click', startDualRecording2k);
+        if (btnStartDual) btnStartDual.addEventListener('click', startDualRecording1080);
 
         // --- Export PNG sequence (alpha) into ZIP ---
         function _dataURLToBlob(dataUrl){
@@ -191,7 +191,7 @@
                 const secStr = prompt('Aantal seconden (1–30):', '3');
                 if (secStr == null) return;
                 let secs = Math.max(1, Math.min(30, Math.floor(Number(secStr)||3)));
-                const do4k = confirm('Opschalen naar ~4K canvas? Dit kan veel geheugen gebruiken. OK = ja, Cancel = nee.');
+                const do1080 = confirm('Opschalen naar 1080x1080 canvas? Dit kan extra geheugen gebruiken. OK = ja, Cancel = nee.');
 
                 btnPngSeq && (btnPngSeq.disabled = true);
                 btnStop && (btnStop.disabled = true);
@@ -199,7 +199,7 @@
                 btnStartMP4 && (btnStartMP4.disabled = true);
                 
 
-                if (do4k) window.dispatchEvent(new CustomEvent('recorder:start', { detail: { targetW: 4096, targetH: 4096, contentScale: 1 } }));
+                if (do1080) window.dispatchEvent(new CustomEvent('recorder:start', { detail: { targetW: 1080, targetH: 1080, contentScale: 1 } }));
                 const prevBg = (typeof window._sc_getBgEnabled === 'function') ? !!window._sc_getBgEnabled() : null;
                 try { if (typeof window._sc_setBgEnabled === 'function') window._sc_setBgEnabled(false); } catch(_){}
 
@@ -251,7 +251,7 @@
 
         if (btnPngSeq) btnPngSeq.addEventListener('click', exportPngSequence);
 
-        // --- Dual WebM (color + matte) at ~2K square using MediaRecorder ---
+        // --- Dual WebM (color + matte) at 1080 square using MediaRecorder ---
         function createCanvas(w, h){ const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
         function drawLetterboxed(dstCtx, srcCanvas, outW, outH, bgColor){
             dstCtx.clearRect(0,0,outW,outH);
@@ -282,9 +282,9 @@
             dstCtx.restore();
         }
 
-        function startDualRecording2k(){
+        function startDualRecording1080(){
             try {
-                const OUT = 2048; // 2K vierkant
+                const OUT = 1080; // 1080 vierkant
                 // Prepare UI
                 if (btnStartWebM) btnStartWebM.disabled = true;
                 if (btnStartMP4)  btnStartMP4.disabled  = true;

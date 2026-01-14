@@ -6,8 +6,11 @@
 // ----------------- Setup Paper -----------------
 const canvas = document.getElementById('c');
 if (!canvas) { console.error('Canvas #c not found'); return; }
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
+const BASE_CANVAS_SIZE = 1080;
+canvas.width = BASE_CANVAS_SIZE;
+canvas.height = BASE_CANVAS_SIZE;
+canvas.style.width = BASE_CANVAS_SIZE + 'px';
+canvas.style.height = BASE_CANVAS_SIZE + 'px';
 paper.setup(canvas);
 const { Path, Point, view, project, SymbolDefinition, Tool } = paper;
 const tool = new Tool();
@@ -220,6 +223,22 @@ function keyFromPath(p){
     return f.replace(/\.svg$/,''); // 'S','E','C','T','I','E','C-inverted'
 }
 
+const BOLT_KEYS = BOLT_FILES.map(keyFromPath);
+const ARROW_TI_GAP_INDEX = (() => {
+    const t = BOLT_KEYS.indexOf('T');
+    const i = BOLT_KEYS.indexOf('I');
+    return (t >= 0 && i === t + 1) ? t : -1;
+})();
+const ARROW_TI_GAP_EXTRA_FRAC = 0.2;
+
+function getArrowSpacingList(){
+    const list = new Array(N - 1).fill(SPACING);
+    if (ARROW_TI_GAP_INDEX >= 0 && ARROW_TI_GAP_INDEX < list.length){
+        list[ARROW_TI_GAP_INDEX] += SPACING * ARROW_TI_GAP_EXTRA_FRAC;
+    }
+    return list;
+}
+
 // Track a direct reference to the dash item regardless of array index
 let dashItem = null;
 
@@ -393,6 +412,33 @@ function distributeOnSinglePathWithSpacing(path, count, spacing, align='upright'
     }
     return targets;
 }
+function distributeOnSinglePathWithSpacingList(path, count, spacingList, align='upright'){
+    const targets = [];
+    let offset = 0;
+    for (let i=0; i<count; i++){
+        const off = Math.min(offset, path.length);
+        const pt = path.getPointAt(off);
+        const tan = path.getTangentAt(off) || new Point(1,0);
+        const rot = (align === 'tangent') ? tan.angle
+                : (align === 'fixed0') ? 0
+                : 0;
+        const centeredPt = pt.add(new Point(centerX, centerY));
+        targets.push({ pos: centeredPt, rot });
+        if (i < count - 1){
+            const step = (spacingList && spacingList[i] != null) ? spacingList[i] : SPACING;
+            offset += step;
+        }
+    }
+    return targets;
+}
+function scalePathToLength(path, targetLength){
+    const len = path && path.length;
+    if (!len || !isFinite(len)) return;
+    if (!isFinite(targetLength) || targetLength <= 0) return;
+    const scale = targetLength / len;
+    if (!isFinite(scale) || Math.abs(scale - 1) < 1e-6) return;
+    path.scale(scale, new Point(0,0));
+}
 
 // Interpoleer huidige -> target (met GSAP-driver)
 const interp = { t: 1 };     // 0..1
@@ -412,7 +458,7 @@ let transitionToPoseId   = null;
 let currentTweenDur = 0.8;
 let staggerRank = new Array(N).fill(0);
 
-// --- Recording sizing (4k) ---
+// --- Recording sizing (1080) ---
 let isRecording = false;
 let origCanvasW = canvas.width;
 let origCanvasH = canvas.height;
@@ -511,8 +557,8 @@ function stopAlphaRecording(){
 // Convenience keybinding: Shift+V starts a short alpha capture, Shift+S stops
 window.addEventListener('keydown', (e) => {
   if (e.shiftKey && (e.key === 'v' || e.key === 'V')){
-    // 4K square backing store, mild content scale for crisp vectors
-    startAlphaRecording({ targetW: 4096, targetH: 4096, contentScale: 1.15, fps: TARGET_FPS, fileName: `sectie-c-bolts-alpha` });
+    // 1080 square backing store, mild content scale for crisp vectors
+    startAlphaRecording({ targetW: 1080, targetH: 1080, contentScale: 1.15, fps: TARGET_FPS, fileName: `sectie-c-bolts-alpha` });
   }
   if (e.shiftKey && (e.key === 's' || e.key === 'S')){
     stopAlphaRecording();
@@ -525,7 +571,7 @@ function setCanvasPixelSize(w, h){
     view.viewSize = new paper.Size(w, h);
 }
 
-function applyRecordSizing(targetW = 4096, targetH = 4096){
+function applyRecordSizing(targetW = 1080, targetH = 1080){
     if (isRecording) return;
     // remember original
     origCanvasW = canvas.width;
@@ -538,7 +584,7 @@ function applyRecordSizing(targetW = 4096, targetH = 4096){
     const rect = canvas.getBoundingClientRect();
     const cssW = Math.max(1, Math.round(rect.width));
     const cssH = Math.max(1, Math.round(rect.height));
-    const targetMax = Math.max(targetW, targetH); // e.g. 4096
+    const targetMax = Math.max(targetW, targetH); // e.g. 1080
     const scale = Math.max(1, targetMax / Math.max(cssW, cssH));
     const newW = Math.round(cssW * scale);
     const newH = Math.round(cssH * scale);
@@ -986,7 +1032,8 @@ function applyPose() {
         }
         p.smooth({ type: 'continuous' });
 
-        const targets = distributeOnPaths([p], N, 'upright');
+        scalePathToLength(p, SPACING * (N - 1));
+        const targets = distributeOnSinglePathWithSpacing(p, N, SPACING, 'upright');
         p.remove();
         return maybeReverseTargets(targets);
     }
@@ -1008,7 +1055,8 @@ function applyPose() {
         }
         p.smooth({ type: 'continuous' });
 
-        const targets = distributeOnPaths([p], N, 'upright');
+        scalePathToLength(p, SPACING * (N - 1));
+        const targets = distributeOnSinglePathWithSpacing(p, N, SPACING, 'upright');
         p.remove();
         return maybeReverseTargets(targets);
     }
@@ -1018,7 +1066,8 @@ function applyPose() {
         const startAngle = circleRotDeg - sweep/2;
         const endAngle   = circleRotDeg + sweep/2;
         const p = makeArcPath(0, 0, r, startAngle, endAngle);
-        const targets = distributeOnPaths([p], N, 'upright');
+        scalePathToLength(p, SPACING * (N - 1));
+        const targets = distributeOnSinglePathWithSpacing(p, N, SPACING, 'upright');
         p.remove();
         return maybeReverseTargets(targets);
     }
@@ -1041,7 +1090,10 @@ function applyPose() {
         const pts = basePts.map(([x,y]) => [x*c - y*s, x*s + y*c]);
 
         const p = makePolylineSharp(pts);
-        const targets = distributeOnPaths([p], N, 'upright'); // include '-'
+        const spacingList = getArrowSpacingList();
+        const totalLen = spacingList.reduce((sum, v) => sum + v, 0);
+        scalePathToLength(p, totalLen);
+        const targets = distributeOnSinglePathWithSpacingList(p, N, spacingList, 'upright'); // include '-'
         p.remove();
         return maybeReverseTargets(targets);
     }
@@ -1261,8 +1313,8 @@ function applyPose() {
     // Recording: switch main canvas drawing buffer up and back down
     window.addEventListener('recorder:start', (e) => {
         const d = (e && e.detail) || {};
-        const tw = Number(d && d.targetW) || 4096;
-        const th = Number(d && d.targetH) || 4096;
+        const tw = Number(d && d.targetW) || 1080;
+        const th = Number(d && d.targetH) || 1080;
         applyRecordSizing(tw, th);
         // Optional content scale: simply bump global SCALE
         const cs = (d && d.contentScale != null) ? Number(d.contentScale) : 1;
@@ -1345,7 +1397,8 @@ function maybeReverseTargets(tgs){
                     p.add(new Point(Math.cos(ang)*rx, Math.sin(ang)*ry + yShift));
                 }
                 p.smooth({ type: 'continuous' });
-                const slots = distributeOnPaths([p], N, 'upright');
+                scalePathToLength(p, SPACING * (N - 1));
+                const slots = distributeOnSinglePathWithSpacing(p, N, SPACING, 'upright');
                 p.remove();
                 return slots;
             }
@@ -1364,7 +1417,8 @@ function maybeReverseTargets(tgs){
                     p.add(new Point(Math.cos(ang)*rx, Math.sin(ang)*ry + yShift));
                 }
                 p.smooth({ type: 'continuous' });
-                const slots = distributeOnPaths([p], N, 'upright');
+                scalePathToLength(p, SPACING * (N - 1));
+                const slots = distributeOnSinglePathWithSpacing(p, N, SPACING, 'upright');
                 p.remove();
                 return slots;
             }
@@ -1374,7 +1428,8 @@ function maybeReverseTargets(tgs){
                 const startAngle = circleRotDeg - sweep/2;
                 const endAngle   = circleRotDeg + sweep/2;
                 const p = makeArcPath(0, 0, r, startAngle, endAngle);
-                const slots = distributeOnPaths([p], N, 'upright');
+                scalePathToLength(p, SPACING * (N - 1));
+                const slots = distributeOnSinglePathWithSpacing(p, N, SPACING, 'upright');
                 p.remove();
                 return slots;
             }
@@ -1392,7 +1447,10 @@ function maybeReverseTargets(tgs){
                 const c = Math.cos(a), s = Math.sin(a);
                 const pts = basePts.map(([x,y]) => [x*c - y*s, x*s + y*c]);
                 const p = makePolylineSharp(pts);
-                const slots = distributeOnPaths([p], N, 'upright');
+                const spacingList = getArrowSpacingList();
+                const totalLen = spacingList.reduce((sum, v) => sum + v, 0);
+                scalePathToLength(p, totalLen);
+                const slots = distributeOnSinglePathWithSpacingList(p, N, spacingList, 'upright');
                 p.remove();
                 return slots;
             }
