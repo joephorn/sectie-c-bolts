@@ -6,9 +6,9 @@ Design tool voor Sectie-C's logo.
 ## Features
 - Wisselen tussen logo configuraties met shortcuts
 - Om de grootte van de export aan te passen:
-    1. Inspect Element (Command ```⌘``` + Option ```⌥``` + ```I```).
+    1. Inspect Element (Command `⌘` + Option `⌥` + `I`).
     2. Ga naar de *Elements* tab.
-    3. Zoek *<canvas>* (in <html>/<body>.
+    3. Zoek het *`<canvas>`* element (in `<html>`/`<body>`.
     4. Verander *width* en *height* naar de gewenste waarde. Deze moeten gelijkwaardig blijven.
 - Exporteren naar SVG / PNG sequence / WebM / MP4 / WebM met alpha:
     1. Open de website met Chrome. Andere browsers kunnen instabiel zijn.
