@@ -6,11 +6,12 @@
 // ----------------- Setup Paper -----------------
 const canvas = document.getElementById('c');
 if (!canvas) { console.error('Canvas #c not found'); return; }
-const BASE_CANVAS_SIZE = 1080;
-canvas.width = BASE_CANVAS_SIZE;
-canvas.height = BASE_CANVAS_SIZE;
-canvas.style.width = BASE_CANVAS_SIZE + 'px';
-canvas.style.height = BASE_CANVAS_SIZE + 'px';
+const baseCanvasSize = Number(window.baseCanvasSize) || 1300;
+window.baseCanvasSize = baseCanvasSize;
+canvas.width = baseCanvasSize;
+canvas.height = baseCanvasSize;
+canvas.style.width = baseCanvasSize + 'px';
+canvas.style.height = baseCanvasSize + 'px';
 paper.setup(canvas);
 const { Path, Point, view, project, SymbolDefinition, Tool } = paper;
 const tool = new Tool();
@@ -132,7 +133,10 @@ const W = view.bounds.width;
 const H = view.bounds.height;
 const centerX = W/2;
 const centerY = H/2;
-let SCALE = 0.75;
+const DESIGN_CANVAS_SIZE = 1080;
+const DESIGN_SCALE = 0.75;
+const canvasScale = (baseCanvasSize > 0) ? (baseCanvasSize / DESIGN_CANVAS_SIZE) : 1;
+let SCALE = DESIGN_SCALE * canvasScale;
 const BASE_SPACING = 110;
 let SPACING = BASE_SPACING * SCALE;
 const JITTER_MAX_DEG = 50;
@@ -458,7 +462,7 @@ let transitionToPoseId   = null;
 let currentTweenDur = 0.8;
 let staggerRank = new Array(N).fill(0);
 
-// --- Recording sizing (1080) ---
+// --- Recording sizing (baseCanvasSize) ---
 let isRecording = false;
 let origCanvasW = canvas.width;
 let origCanvasH = canvas.height;
@@ -557,8 +561,8 @@ function stopAlphaRecording(){
 // Convenience keybinding: Shift+V starts a short alpha capture, Shift+S stops
 window.addEventListener('keydown', (e) => {
   if (e.shiftKey && (e.key === 'v' || e.key === 'V')){
-    // 1080 square backing store, mild content scale for crisp vectors
-    startAlphaRecording({ targetW: 1080, targetH: 1080, contentScale: 1.15, fps: TARGET_FPS, fileName: `sectie-c-bolts-alpha` });
+    // baseCanvasSize square backing store, mild content scale for crisp vectors
+    startAlphaRecording({ targetW: baseCanvasSize, targetH: baseCanvasSize, contentScale: 1.15, fps: TARGET_FPS, fileName: `sectie-c-bolts-alpha` });
   }
   if (e.shiftKey && (e.key === 's' || e.key === 'S')){
     stopAlphaRecording();
@@ -571,7 +575,7 @@ function setCanvasPixelSize(w, h){
     view.viewSize = new paper.Size(w, h);
 }
 
-function applyRecordSizing(targetW = 1080, targetH = 1080){
+function applyRecordSizing(targetW = baseCanvasSize, targetH = baseCanvasSize){
     if (isRecording) return;
     // remember original
     origCanvasW = canvas.width;
@@ -584,7 +588,7 @@ function applyRecordSizing(targetW = 1080, targetH = 1080){
     const rect = canvas.getBoundingClientRect();
     const cssW = Math.max(1, Math.round(rect.width));
     const cssH = Math.max(1, Math.round(rect.height));
-    const targetMax = Math.max(targetW, targetH); // e.g. 1080
+    const targetMax = Math.max(targetW, targetH); // e.g. baseCanvasSize
     const scale = Math.max(1, targetMax / Math.max(cssW, cssH));
     const newW = Math.round(cssW * scale);
     const newH = Math.round(cssH * scale);
@@ -1313,8 +1317,8 @@ function applyPose() {
     // Recording: switch main canvas drawing buffer up and back down
     window.addEventListener('recorder:start', (e) => {
         const d = (e && e.detail) || {};
-        const tw = Number(d && d.targetW) || 1080;
-        const th = Number(d && d.targetH) || 1080;
+        const tw = Number(d && d.targetW) || baseCanvasSize;
+        const th = Number(d && d.targetH) || baseCanvasSize;
         applyRecordSizing(tw, th);
         // Optional content scale: simply bump global SCALE
         const cs = (d && d.contentScale != null) ? Number(d.contentScale) : 1;
